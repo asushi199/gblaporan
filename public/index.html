@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ms">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Penjana Laporan Kaunseling</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">AutoReport Kaunseling</p>
+          <h1>Jana laporan sesi individu dalam Bahasa Melayu</h1>
+          <p class="lede">
+            Tulis kes dalam Bahasa Cina, pilih sesi yang diperlukan, dan semak
+            hasil yang dikekang kepada REBT serta Realiti (WDEP).
+          </p>
+        </div>
+        <div class="status-card">
+          <p class="status-label">Model lalai</p>
+          <strong id="modelBadge">gemini-3.1-flash-lite</strong>
+          <p class="status-copy" id="apiStatus">Memeriksa API key...</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <form id="settingsForm" class="grid two-up">
+          <label>
+            Model
+            <select id="modelSelect" name="model"></select>
+          </label>
+          <label>
+            API key Gemini
+            <input
+              id="apiKeyInput"
+              name="apiKey"
+              type="password"
+              placeholder="Masukkan sekali, disimpan secara tempatan"
+            />
+          </label>
+          <label>
+            Mod teori
+            <select id="theoryMode" name="theoryMode">
+              <option value="auto">Auto antara REBT / WDEP</option>
+              <option value="rebt">REBT sahaja</option>
+              <option value="wdep">WDEP sahaja</option>
+            </select>
+          </label>
+          <label>
+            Keutamaan teori
+            <select id="theoryPreference" name="theoryPreference">
+              <option value="REBT">Utamakan REBT</option>
+              <option value="WDEP">Utamakan WDEP</option>
+            </select>
+          </label>
+          <label>
+            Privasi
+            <select id="privacyMode" name="privacyMode">
+              <option value="anonymous">Anonimkan nama murid</option>
+              <option value="named">Benarkan nama sebenar</option>
+            </select>
+          </label>
+          <div class="button-row settings-row">
+            <button type="submit">Simpan tetapan</button>
+          </div>
+        </form>
+        <p id="serverKeyHint" class="privacy-hint hidden">
+          API key diurus pada pelayan. Guru yang menggunakan pautan ini tidak
+          perlu mengisi API key.
+        </p>
+        <p id="privacyHint" class="privacy-hint hidden">
+          Mod ini sesuai hanya jika guru memang mahu menghantar nama sebenar ke
+          API luar.
+        </p>
+      </section>
+
+      <section class="panel">
+        <form id="generateForm">
+          <div class="grid two-up">
+            <label class="full-span">
+              Huraian kes (Bahasa Cina)
+              <textarea
+                id="caseDescription"
+                name="caseDescription"
+                rows="7"
+                placeholder="例如：学生因为常和同学争吵，不想来学校。之前做了2次辅导，第1次建立关系，第2次开始探讨..."
+                required
+              ></textarea>
+            </label>
+            <label>
+              Bilangan sesi
+              <input
+                id="sessionCount"
+                name="sessionCount"
+                type="number"
+                class="compact-input"
+                min="1"
+                max="8"
+                value="4"
+                required
+              />
+            </label>
+            <section class="phase-picker">
+              <div class="phase-copy">
+                <p class="phase-title">Fasa yang terlibat</p>
+                <p id="phaseHelp" class="phase-help">
+                  Pilih satu atau lebih fasa untuk keseluruhan set sesi ini.
+                </p>
+              </div>
+              <div id="phaseSelections" class="phase-selections"></div>
+            </section>
+          </div>
+          <div class="button-row">
+            <button type="submit" id="generateButton">Jana laporan</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="qualityPanel" class="panel hidden"></section>
+      <section id="results" class="results"></section>
+    </main>
+
+    <template id="sessionTemplate">
+      <article class="result-card">
+        <header class="result-header">
+          <h2></h2>
+          <p class="theory-tag"></p>
+        </header>
+        <div class="field-list"></div>
+      </article>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>
