@@ -158,7 +158,7 @@ function renderSessions(sessions) {
   const fields = [
     ["Perkara", "perkara"],
     ["Persoalan", "persoalan"],
-    ["Huraian Tindakan / Intervensi", "huraianTindakanIntervensi"]
+    ["Huraian Tindakan / Intervensi", "huraianTindakanIntervensi", true]
   ];
 
   results.innerHTML = "";
@@ -169,7 +169,10 @@ function renderSessions(sessions) {
     fragment.querySelector(".theory-tag").textContent = session.theoryUsed;
 
     const fieldList = fragment.querySelector(".field-list");
-    fields.forEach(([label, key]) => {
+    fields.forEach(([label, key, isPointForm]) => {
+      const value = isPointForm
+        ? formatPointForm(session[key] || "")
+        : session[key] || "";
       const field = document.createElement("section");
       field.className = "field";
       field.innerHTML = `
@@ -177,11 +180,11 @@ function renderSessions(sessions) {
           <p class="field-name">${label}</p>
           <button class="field-copy" type="button">Salin</button>
         </div>
-        <p class="field-value">${escapeHtml(session[key] || "")}</p>
+        <p class="field-value">${escapeHtml(value)}</p>
       `;
 
       field.querySelector(".field-copy").addEventListener("click", async () => {
-        await navigator.clipboard.writeText(session[key] || "");
+        await navigator.clipboard.writeText(value);
       });
 
       fieldList.appendChild(field);
@@ -211,10 +214,7 @@ function renderPhaseOptions() {
     const wrapper = document.createElement("label");
     wrapper.className = "phase-row";
 
-    const checked =
-      currentValues.length > 0
-        ? currentValues.includes(phase.value)
-        : index === 1 || index === 2;
+    const checked = currentValues.includes(phase.value);
 
     wrapper.innerHTML = `
       <input type="checkbox" value="${phase.value}" ${checked ? "checked" : ""} />
@@ -253,4 +253,13 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function formatPointForm(value) {
+  return String(value || "")
+    .replace(/\s+-\s+(?=(GBK|Klien|Murid)\b)/gi, "\n- ")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
 }

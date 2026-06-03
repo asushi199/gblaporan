@@ -186,6 +186,34 @@ test("validateSessionBatch rejects process-like perkara and question-list persoa
   assert.match(result.issues.join(" "), /gabungan beberapa soalan/i);
 });
 
+test("validateSessionBatch rejects vague process summaries and direct question persoalan", () => {
+  const result = validateSessionBatch({
+    requestedRange: { startSession: 1, endSession: 1 },
+    theoryMode: "auto",
+    sourceCaseDescription: "Guru merujuk murid kerana bimbang dengan perubahan fizikal murid.",
+    sessions: [
+      {
+        sessionNumber: 1,
+        perkara: "Meneroka Isu Rujukan dan Membina Hubungan",
+        persoalan:
+          "Apakah punca kebimbangan guru terhadap klien, dan bagaimana klien memahami situasi yang berlaku?",
+        huraianBullets: [
+          "GBK menjemput klien hadir ke sesi.",
+          "Klien berkongsi keadaan yang dialami.",
+          "GBK membina hubungan dengan klien.",
+          "GBK merumuskan sesi dan menangguhkan pertemuan."
+        ],
+        theoryUsed: "REBT",
+        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
+      }
+    ]
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.issues.join(" "), /Perkara perlu menjadi tajuk isu utama/i);
+  assert.match(result.issues.join(" "), /kata soal 'apakah'/i);
+});
+
 test("validateSessionBatch rejects sessions without bullet arrays", () => {
   const result = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 1 },
