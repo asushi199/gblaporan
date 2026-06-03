@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   buildSessionRanges,
   buildPromptPayload,
+  getReportSchema,
+  normaliseSession,
   parsePhaseNumbers,
   validatePhaseSelections,
   validateSessionBatch
@@ -64,6 +66,61 @@ test("buildPromptPayload locks the prompt to REBT/WDEP and omits tindakan/interv
     /Fasa yang diliputi oleh keseluruhan set sesi ini: Fasa 2 - Membina Hubungan, Fasa 3 - Penerokaan Masalah/i
   );
   assert.doesNotMatch(payload.userPrompt, /tindakanIntervensi/i);
+});
+
+test("buildPromptPayload reuses common fields for later batches", () => {
+  const payload = buildPromptPayload({
+    caseDescription: "Murid dirujuk kerana guru bimbang tentang perubahan emosi murid.",
+    sessionCount: 3,
+    phases: ["fasa2", "fasa3"],
+    theoryMode: "auto",
+    theoryPreference: "REBT",
+    privacyMode: "anonymous",
+    currentRange: { startSession: 3, endSession: 3 },
+    commonFields: {
+      perkara: "Murid dirujuk kerana guru bimbang tentang perubahan emosi murid.",
+      persoalan:
+        "Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai."
+    },
+    previousSessions: []
+  });
+
+  assert.match(payload.userPrompt, /Gunakan commonFields ini secara tepat/i);
+});
+
+test("getReportSchema requires commonFields and per-session huraian only", () => {
+  const schema = getReportSchema({ startSession: 1, endSession: 2 });
+  const sessionRequired = schema.properties.sessions.items.required;
+
+  assert.deepEqual(schema.required, ["commonFields", "sessions"]);
+  assert.deepEqual(schema.properties.commonFields.required, ["perkara", "persoalan"]);
+  assert.equal(sessionRequired.includes("perkara"), false);
+  assert.equal(sessionRequired.includes("persoalan"), false);
+  assert.equal(sessionRequired.includes("huraianBullets"), true);
+});
+
+test("normaliseSession applies shared common fields to each session", () => {
+  const session = normaliseSession(
+    {
+      sessionNumber: 1,
+      huraianBullets: [
+        "GBK menjemput klien hadir ke sesi.",
+        "Klien berkongsi isu yang dialami.",
+        "GBK membina hubungan dengan klien.",
+        "GBK merumuskan sesi."
+      ],
+      theoryUsed: "REBT",
+      continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
+    },
+    {
+      perkara: "Murid dirujuk kerana guru bimbang tentang perubahan emosi murid.",
+      persoalan:
+        "Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai."
+    }
+  );
+
+  assert.match(session.perkara, /Murid dirujuk/);
+  assert.match(session.persoalan, /konflik sebenar/);
 });
 
 test("validatePhaseSelections requires at least one selected phase", () => {

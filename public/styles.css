@@ -254,7 +254,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: baseline;
+  align-items: flex-start;
   border-bottom: 1px solid var(--line);
   padding-bottom: 12px;
   margin-bottom: 14px;
@@ -269,6 +269,11 @@ button:disabled {
   margin: 0;
   color: var(--accent);
   font-weight: 700;
+}
+
+.session-copy {
+  padding: 8px 12px;
+  white-space: nowrap;
 }
 
 .field-list {

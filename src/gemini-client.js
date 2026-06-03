@@ -27,11 +27,13 @@ export async function generateCounsellingReport({
   const ranges = buildSessionRanges(payload.sessionCount);
   const allSessions = [];
   const batchChecks = [];
+  let sharedCommonFields = null;
 
   for (const range of ranges) {
     const promptPayload = buildPromptPayload({
       ...payload,
       currentRange: range,
+      commonFields: sharedCommonFields,
       previousSessions: allSessions
     });
     const generated = await requestBatch({
@@ -41,7 +43,13 @@ export async function generateCounsellingReport({
       range
     });
 
-    const normalised = generated.sessions.map(normaliseSession);
+    if (!sharedCommonFields) {
+      sharedCommonFields = generated.commonFields;
+    }
+
+    const normalised = generated.sessions.map((session) =>
+      normaliseSession(session, sharedCommonFields)
+    );
     const validation = validateSessionBatch({
       requestedRange: range,
       theoryMode: payload.theoryMode,

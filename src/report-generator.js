@@ -132,6 +132,7 @@ export function buildPromptPayload({
   theoryPreference,
   privacyMode,
   currentRange,
+  commonFields = null,
   previousSessions = []
 }) {
   const previousSummary = previousSessions.length
@@ -182,9 +183,13 @@ export function buildPromptPayload({
       `Fasa yang diliputi oleh keseluruhan set sesi ini: ${describePhases(phases)}.`,
       `Jana laporan untuk Sesi ${currentRange.startSession} hingga ${currentRange.endSession}.`,
       "Agihkan perkembangan sesi secara munasabah berdasarkan fasa yang dipilih. Jangan paksa satu batch kepada satu fasa tertentu kecuali maklumat kes benar-benar menuntut begitu.",
-      "Setiap sesi mesti mengandungi perkara, persoalan, huraianBullets, theoryUsed, continuityNote.",
-      "perkara mesti merumuskan isu utama atau tujuan rujukan, bukan tajuk proses sesi.",
-      "persoalan mesti menjadi punca utama atau konflik dasar dalam bentuk ayat penyata.",
+      commonFields
+        ? `Gunakan commonFields ini secara tepat untuk semua sesi dalam batch ini: ${JSON.stringify(commonFields)}.`
+        : "Jana commonFields.perkara dan commonFields.persoalan berdasarkan keseluruhan kes.",
+      "Jana commonFields sekali sahaja untuk keseluruhan set sesi. commonFields.perkara dan commonFields.persoalan akan digunakan semula untuk semua sesi.",
+      "Setiap sesi hanya perlu mengandungi sessionNumber, huraianBullets, theoryUsed, continuityNote.",
+      "commonFields.perkara mesti merumuskan isu utama atau tujuan rujukan, bukan tajuk proses sesi.",
+      "commonFields.persoalan mesti menjadi punca utama atau konflik dasar dalam bentuk ayat penyata.",
       "Contoh perkara yang baik: 'Murid dirujuk kerana guru bimbang tentang perubahan fizikal murid.'",
       "Contoh persoalan yang baik jika belum pasti: 'Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai.'",
       "Contoh persoalan yang baik jika isu jelas: 'Klien berasa tidak selesa apabila isu peribadi diberi perhatian oleh guru dan masih belum dapat menyatakan punca emosi dengan jelas.'",
@@ -208,6 +213,14 @@ export function getReportSchema(range) {
   return {
     type: "object",
     properties: {
+      commonFields: {
+        type: "object",
+        properties: {
+          perkara: { type: "string" },
+          persoalan: { type: "string" }
+        },
+        required: ["perkara", "persoalan"]
+      },
       sessions: {
         type: "array",
         minItems: expectedCount,
@@ -216,8 +229,6 @@ export function getReportSchema(range) {
           type: "object",
           properties: {
             sessionNumber: { type: "integer" },
-            perkara: { type: "string" },
-            persoalan: { type: "string" },
             huraianBullets: {
               type: "array",
               minItems: 4,
@@ -232,8 +243,6 @@ export function getReportSchema(range) {
           },
           required: [
             "sessionNumber",
-            "perkara",
-            "persoalan",
             "huraianBullets",
             "theoryUsed",
             "continuityNote"
@@ -241,11 +250,11 @@ export function getReportSchema(range) {
         }
       }
     },
-    required: ["sessions"]
+    required: ["commonFields", "sessions"]
   };
 }
 
-export function normaliseSession(session) {
+export function normaliseSession(session, commonFields = {}) {
   const hasBulletArray = Array.isArray(session.huraianBullets);
   const bullets = hasBulletArray
     ? session.huraianBullets
@@ -256,8 +265,8 @@ export function normaliseSession(session) {
 
   return {
     sessionNumber: Number(session.sessionNumber),
-    perkara: String(session.perkara || "").trim(),
-    persoalan: String(session.persoalan || "").trim(),
+    perkara: String(session.perkara || commonFields.perkara || "").trim(),
+    persoalan: String(session.persoalan || commonFields.persoalan || "").trim(),
     huraianTindakanIntervensi: bullets.join("\n").trim(),
     hasBulletArray,
     theoryUsed: String(session.theoryUsed || "").trim().toUpperCase(),

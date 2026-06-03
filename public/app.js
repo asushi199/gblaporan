@@ -167,6 +167,9 @@ function renderSessions(sessions) {
     const fragment = sessionTemplate.content.cloneNode(true);
     fragment.querySelector("h2").textContent = `Sesi ${session.sessionNumber}`;
     fragment.querySelector(".theory-tag").textContent = session.theoryUsed;
+    fragment.querySelector(".session-copy").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(formatSessionForCopy(session));
+    });
 
     const fieldList = fragment.querySelector(".field-list");
     fields.forEach(([label, key, isPointForm]) => {
@@ -262,4 +265,17 @@ function formatPointForm(value) {
     .map((line) => line.trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function formatSessionForCopy(session) {
+  return [
+    "Perkara",
+    session.perkara || "",
+    "",
+    "Persoalan",
+    session.persoalan || "",
+    "",
+    "Huraian Tindakan / Intervensi",
+    formatPointForm(session.huraianTindakanIntervensi || "")
+  ].join("\n");
 }
