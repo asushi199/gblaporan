@@ -45,7 +45,8 @@ export async function generateCounsellingReport({
     const validation = validateSessionBatch({
       requestedRange: range,
       theoryMode: payload.theoryMode,
-      sessions: normalised
+      sessions: normalised,
+      sourceCaseDescription: payload.caseDescription
     });
 
     batchChecks.push({
@@ -62,6 +63,19 @@ export async function generateCounsellingReport({
     issues: batchChecks.flatMap((check) => check.validation.issues),
     warnings: batchChecks.flatMap((check) => check.validation.warnings)
   };
+
+  if (!aggregateValidation.ok) {
+    const error = new Error(
+      aggregateValidation.issues[0] ||
+        "Respons model tidak menepati format laporan yang diperlukan."
+    );
+    error.validation = {
+      ...aggregateValidation,
+      advice: buildQualityAdvice(aggregateValidation),
+      batches: batchChecks
+    };
+    throw error;
+  }
 
   return {
     sessions: allSessions,

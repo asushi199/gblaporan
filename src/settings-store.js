@@ -5,7 +5,7 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.local.json");
 
 const DEFAULT_SETTINGS = {
-  model: "gemini-3.1-flash-lite",
+  model: "gemini-2.5-flash",
   apiKey: "",
   theoryMode: "auto",
   theoryPreference: "REBT",

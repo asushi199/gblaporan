@@ -127,8 +127,9 @@ const server = http.createServer(async (req, res) => {
 
     await serveStatic(req, res, url.pathname);
   } catch (error) {
-    sendJson(res, 500, {
-      error: error.message || "Ralat pelayan."
+    sendJson(res, error.validation ? 422 : 500, {
+      error: error.message || "Ralat pelayan.",
+      quality: error.validation || null
     });
   }
 });

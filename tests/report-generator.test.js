@@ -26,7 +26,7 @@ test("buildSessionRanges keeps shorter requests compact", () => {
   ]);
 });
 
-test("buildPromptPayload locks the prompt to REBT and WDEP only", () => {
+test("buildPromptPayload locks the prompt to REBT/WDEP and omits tindakan/intervensi", () => {
   const payload = buildPromptPayload({
     caseDescription: "学生因为和同学争吵而不想来学校。",
     sessionCount: 4,
@@ -45,14 +45,25 @@ test("buildPromptPayload locks the prompt to REBT and WDEP only", () => {
 
   assert.match(payload.systemInstruction, /REBT/i);
   assert.match(payload.systemInstruction, /WDEP/i);
+  assert.match(
+    payload.systemInstruction,
+    /Persoalan merujuk kepada punca utama atau konflik dasar/i
+  );
+  assert.match(
+    payload.systemInstruction,
+    /Perkara ialah tajuk atau rumusan utama perkara/i
+  );
+  assert.match(
+    payload.systemInstruction,
+    /Tindakan\/Intervensi tidak perlu dijana/i
+  );
   assert.doesNotMatch(payload.systemInstruction, /Gestalt/i);
   assert.match(payload.userPrompt, /Sesi 3 hingga 4/i);
   assert.match(
     payload.userPrompt,
     /Fasa yang diliputi oleh keseluruhan set sesi ini: Fasa 2 - Membina Hubungan, Fasa 3 - Penerokaan Masalah/i
   );
-  assert.match(payload.userPrompt, /Agihkan perkembangan sesi secara munasabah/i);
-  assert.match(payload.userPrompt, /kesinambungan/i);
+  assert.doesNotMatch(payload.userPrompt, /tindakanIntervensi/i);
 });
 
 test("validatePhaseSelections requires at least one selected phase", () => {
@@ -78,30 +89,40 @@ test("parsePhaseNumbers turns compact numeric input into phase ids", () => {
   assert.deepEqual(parsePhaseNumbers("2, 3,6"), ["fasa2", "fasa3", "fasa6"]);
 });
 
-test("validateSessionBatch accepts well-shaped point-form sessions", () => {
+test("validateSessionBatch accepts phase-based and theory-based persoalan", () => {
   const result = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 2 },
     theoryMode: "auto",
+    sourceCaseDescription: "学生因为经常跟同学起冲突而来见辅导老师。",
     sessions: [
       {
         sessionNumber: 1,
         perkara: "Murid datang secara sukarela kerana sering bergaduh dengan rakan.",
-        persoalan: "Fasa membina hubungan dan penerokaan masalah masih dijalankan maka masalah sebenar belum diterokai sepenuhnya.",
-        tindakanIntervensi: "Sesi kaunseling individu",
-        huraianTindakanIntervensi:
-          "- GBK menjemput klien hadir ke sesi.\n- Klien berkongsi situasi konflik yang dialami.\n- GBK menggunakan teknik REBT untuk mengenal pasti pemikiran tidak rasional.\n- Sesi dirumus dan ditangguhkan.",
+        persoalan:
+          "Masih dalam fasa membina hubungan maka masalah sebenar masih perlu diterokai.",
+        huraianBullets: [
+          "GBK menjemput klien hadir ke sesi.",
+          "Klien berkongsi situasi konflik yang dialami.",
+          "GBK membina hubungan dan memberi ruang kepada klien untuk bercerita.",
+          "GBK merumuskan sesi dan menangguhkan pertemuan."
+        ],
         theoryUsed: "REBT",
         continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
       },
       {
         sessionNumber: 2,
         perkara: "Klien hadir semula untuk menyambung perbincangan tentang konflik dengan rakan.",
-        persoalan: "Kepercayaan tidak rasional bahawa rakan mesti sentiasa memahami dirinya masih mempengaruhi emosi klien.",
-        tindakanIntervensi: "Sesi kaunseling individu",
-        huraianTindakanIntervensi:
-          "- GBK menyemak perkembangan klien sejak sesi lepas.\n- Klien berkongsi bahawa dia masih mudah marah apabila diejek.\n- GBK menggunakan teknik WDEP untuk menilai tindakan semasa klien.\n- Sesi dirumus dan ditangguhkan.",
+        persoalan:
+          "Kepercayaan tidak rasional bahawa rakan mesti sentiasa memahami dirinya masih mempengaruhi emosi klien.",
+        huraianBullets: [
+          "GBK menyemak perkembangan klien sejak sesi lepas.",
+          "Klien berkongsi bahawa dia masih mudah marah apabila diejek.",
+          "GBK menggunakan teknik WDEP untuk menilai tindakan semasa klien.",
+          "GBK merumuskan sesi dan menangguhkan pertemuan."
+        ],
         theoryUsed: "WDEP",
-        continuityNote: "Sesi ini menyambung isu kemarahan yang dibincang dalam sesi pertama."
+        continuityNote:
+          "Sesi ini menyambung isu kemarahan yang dibincang dalam sesi pertama."
       }
     ]
   });
@@ -110,16 +131,16 @@ test("validateSessionBatch accepts well-shaped point-form sessions", () => {
   assert.equal(result.issues.length, 0);
 });
 
-test("validateSessionBatch flags unsupported theories and weak formatting", () => {
+test("validateSessionBatch flags unsupported theories and weak persoalan", () => {
   const result = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 1 },
     theoryMode: "auto",
+    sourceCaseDescription: "学生感到伤心，不想来学校。",
     sessions: [
       {
         sessionNumber: 1,
         perkara: "",
-        persoalan: "Klien berasa sedih.",
-        tindakanIntervensi: "Sesi kaunseling individu",
+        persoalan: "Adakah klien didera secara seksual?",
         huraianTindakanIntervensi: "GBK bercakap dengan klien.",
         theoryUsed: "CBT",
         continuityNote: ""
@@ -131,4 +152,59 @@ test("validateSessionBatch flags unsupported theories and weak formatting", () =
   assert.match(result.issues.join(" "), /Perkara/i);
   assert.match(result.issues.join(" "), /CBT/i);
   assert.match(result.issues.join(" "), /point form/i);
+  assert.match(result.issues.join(" "), /bukan soalan/i);
+  assert.match(result.issues.join(" "), /andaian sensitif/i);
+});
+
+test("validateSessionBatch rejects process-like perkara and question-list persoalan", () => {
+  const result = validateSessionBatch({
+    requestedRange: { startSession: 1, endSession: 1 },
+    theoryMode: "auto",
+    sourceCaseDescription: "Guru merujuk murid kerana kerap bergaduh dengan rakan.",
+    sessions: [
+      {
+        sessionNumber: 1,
+        perkara:
+          "Sesi Kaunseling Individu: Penerokaan Awal Isu Rujukan dan Latar Belakang Klien",
+        persoalan:
+          "Apakah punca rujukan klien? Bagaimana situasi keluarga klien? Adakah klien memahami isu ini?",
+        huraianBullets: [
+          "GBK menjemput klien hadir ke sesi.",
+          "Klien berkongsi situasi yang berlaku.",
+          "GBK meneroka maklumat awal berkaitan isu rujukan.",
+          "GBK merumuskan sesi dan menangguhkan pertemuan."
+        ],
+        theoryUsed: "REBT",
+        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
+      }
+    ]
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.issues.join(" "), /Perkara perlu menjadi tajuk isu utama/i);
+  assert.match(result.issues.join(" "), /kata soal 'apakah'/i);
+  assert.match(result.issues.join(" "), /gabungan beberapa soalan/i);
+});
+
+test("validateSessionBatch rejects sessions without bullet arrays", () => {
+  const result = validateSessionBatch({
+    requestedRange: { startSession: 1, endSession: 1 },
+    theoryMode: "auto",
+    sourceCaseDescription: "学生因为和同学冲突而来辅导。",
+    sessions: [
+      {
+        sessionNumber: 1,
+        perkara: "Murid hadir ke sesi secara sukarela.",
+        persoalan:
+          "Masih dalam fasa membina hubungan maka masalah sebenar masih perlu diterokai.",
+        huraianTindakanIntervensi:
+          "GBK membina hubungan dengan klien. Klien berkongsi situasi yang dialami.",
+        theoryUsed: "REBT",
+        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
+      }
+    ]
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.issues.join(" "), /bullet array/i);
 });

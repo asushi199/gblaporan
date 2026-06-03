@@ -118,18 +118,22 @@ async function handleGenerate(event) {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || "Gagal menjana laporan.");
+      const error = new Error(data.error || "Gagal menjana laporan.");
+      error.quality = data.quality || null;
+      throw error;
     }
 
     renderQuality(data.quality);
     renderSessions(data.sessions);
   } catch (error) {
-    renderQuality({
-      ok: false,
-      issues: [error.message],
-      warnings: [],
-      advice: "Sila semak API key, model, atau cuba jana semula."
-    });
+    renderQuality(
+      error.quality || {
+        ok: false,
+        issues: [error.message],
+        warnings: [],
+        advice: "Sila semak API key, model, atau cuba jana semula."
+      }
+    );
   } finally {
     setBusy(false);
   }
@@ -154,7 +158,6 @@ function renderSessions(sessions) {
   const fields = [
     ["Perkara", "perkara"],
     ["Persoalan", "persoalan"],
-    ["Tindakan/Intervensi", "tindakanIntervensi"],
     ["Huraian Tindakan / Intervensi", "huraianTindakanIntervensi"]
   ];
 
