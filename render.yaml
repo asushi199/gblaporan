@@ -11,3 +11,5 @@ services:
         value: 24.14.1
       - key: GEMINI_API_KEY
         sync: false
+      - key: ACCESS_PASSWORD
+        sync: false

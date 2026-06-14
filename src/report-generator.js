@@ -1,4 +1,5 @@
-const ALLOWED_THEORIES = new Set(["REBT", "WDEP"]);
+const APPROACH_VALUES = ["TIADA", "REBT", "WDEP", "REBT_WDEP"];
+const ALLOWED_APPROACHES = new Set(APPROACH_VALUES);
 export const AVAILABLE_PHASES = [
   { value: "fasa1", label: "Fasa 1 - Pra-Sesi" },
   { value: "fasa2", label: "Fasa 2 - Membina Hubungan" },
@@ -18,10 +19,21 @@ const BANNED_THEORY_WORDS = [
   "Solution Focused",
   "Narrative Therapy"
 ];
+const BANNED_WORDS = [
+  "nakal",
+  "degil",
+  "ganas",
+  "bermasalah",
+  "malas",
+  "ADHD",
+  "anxiety",
+  "depression",
+  "trauma",
+  "hyperaktif"
+];
 const DIAGNOSIS_WORDS = [
   "diagnosis",
   "disahkan",
-  "ADHD",
   "autisme",
   "bipolar",
   "skizofrenia",
@@ -132,26 +144,26 @@ export function buildPromptPayload({
   theoryPreference,
   privacyMode,
   currentRange,
-  commonFields = null,
-  previousSessions = []
+  stablePerkara = "",
+  previousSessions = [],
+  retryIssues = []
 }) {
   const previousSummary = previousSessions.length
     ? previousSessions
         .map(
           (session) =>
-            `Sesi ${session.sessionNumber}: ${session.perkara || ""} ${
+            `Sesi ${session.sesi}: ${session.perkara || ""} ${
               session.persoalan || ""
             }`.trim()
         )
         .join("\n")
     : "Tiada sesi terdahulu.";
 
-  const theoryRule =
-    theoryMode === "rebt"
-      ? "Gunakan REBT sahaja."
-      : theoryMode === "wdep"
-        ? "Gunakan Teori Realiti (WDEP) sahaja."
-        : `Pilih hanya antara REBT atau Teori Realiti (WDEP). Utamakan ${theoryPreference || "REBT"} jika sesuai.`;
+  const retryAdvice = retryIssues.length
+    ? `Betulkan isu semakan ini dan jana semula JSON sahaja: ${retryIssues.join(" ")}`
+    : "Tiada isu semakan terdahulu.";
+
+  const theoryRule = buildTheoryRule(theoryMode, theoryPreference);
 
   const privacyRule =
     privacyMode === "named"
@@ -160,43 +172,49 @@ export function buildPromptPayload({
 
   return {
     systemInstruction: [
-      "Anda ialah pembantu penulisan laporan kaunseling sekolah.",
-      "Tulis dalam Bahasa Melayu rasmi, ringkas, profesional dan gaya point form seperti laporan guru kaunseling sekolah.",
-      "Hanya gunakan teknik REBT dan Teori Realiti (WDEP). Jangan gunakan teori lain.",
-      "Medan theoryUsed mesti tepat sama ada 'REBT' atau 'WDEP' sahaja.",
-      "Setiap sesi mesti menunjukkan kesinambungan yang logik daripada sesi sebelumnya.",
+      "Anda ialah pembantu penulisan laporan kaunseling sekolah rendah.",
+      "Tugas anda hanya menghasilkan valid JSON untuk medan perkara, persoalan, huraian_tindakan_intervensi dan teori bagi setiap sesi.",
+      "Jangan hasilkan laporan penuh, HTML, markdown, jadual, ulasan tambahan, atau teks di luar JSON.",
+      "Setiap sesi mesti mengandungi sesi, teori, perkara, persoalan, huraian_tindakan_intervensi.",
+      "Medan teori ialah penanda pendekatan dalaman sahaja dan tidak dipaparkan kepada guru.",
+      "Nilai teori mesti tepat sama ada 'TIADA', 'REBT', 'WDEP', atau 'REBT_WDEP' sahaja.",
+      "Jika pendekatan tanpa teori khusus dipilih, jangan masukkan istilah teori dalam kandungan laporan.",
+      "Jika pendekatan teori dipilih, hanya gunakan REBT atau Teori Realiti (WDEP). Jangan gunakan teori lain.",
+      "Perkara hanya menulis sebab murid dirujuk atau dipanggil. Ia mesti pendek, neutral, tidak menganalisis punca, tidak menyebut teori, dan tidak menjadi tajuk proses sesi.",
+      "Untuk beberapa sesi, Perkara mesti kekal stabil sebagai sebab asal rujukan atau panggilan kecuali input guru menyatakan sebab rujukan berubah dengan jelas.",
+      "Persoalan merujuk kepada isu utama, konflik dasar atau punca yang mengganggu emosi, pemikiran atau tingkah laku klien. Ia adalah teras permasalahan yang dikenal pasti oleh kaunselor untuk diterokai atau diselesaikan bersama klien sepanjang sesi.",
+      "Persoalan bukan ulangan Perkara, bukan soalan, bukan senarai soalan, bukan tuduhan, dan bukan label terhadap murid.",
+      "Jika maklumat cukup jelas, tulis Persoalan sebagai core issue, konflik dasar atau sebab yang mempengaruhi emosi, pemikiran atau tingkah laku klien.",
+      "Jika sesi masih pada Fasa Membina Hubungan atau isu belum diterokai dengan mendalam, Persoalan boleh ditulis: 'Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya.'",
+      "Jika memilih REBT dan maklumat cukup, tulis dari sudut pemikiran tidak rasional, kepercayaan kurang rasional atau cara klien mentafsir situasi tanpa gaya buku teks.",
+      "Jika memilih WDEP, tulis dari sudut kehendak, tingkah laku semasa, penilaian kendiri dan perancangan tindakan.",
       "Jangan cipta diagnosis klinikal, latar belakang keluarga terperinci, atau fakta yang tiada dalam input.",
       "Jangan buat andaian sensitif tentang penderaan, seksualiti, kehamilan, kecederaan fizikal, atau isu perubatan jika perkara itu tidak disebut jelas dalam input.",
-      "Perkara ialah tajuk atau rumusan utama perkara yang dibawa ke sesi. Tulis seperti contoh: 'Murid dirujuk kerana datang lewat ke sekolah.', 'Murid datang secara sukarela kerana bergaduh dengan kawannya.', atau 'Klien tidak lulus dalam Saringan Minda Sihat.' Jangan tulis nama proses seperti sesi kaunseling, meneroka isu rujukan, penerokaan awal, fasa, atau latar belakang klien.",
-      "Persoalan merujuk kepada punca utama atau konflik dasar yang mengganggu emosi, pemikiran, atau tingkah laku klien.",
-      "Persoalan mesti berupa satu kenyataan ringkas, bukan soalan, bukan senarai soalan, bukan teka-teki, dan bukan siasatan baru yang tiada dalam input.",
-      "Jangan mulakan persoalan dengan Apakah, Bagaimana, Adakah, Mengapa, atau Kenapa.",
-      "Jika isu sebenar belum jelas, persoalan mesti ditulis seperti 'Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai.' atau 'Fasa meneroka masalah masih dijalankan maka punca utama belum dikenal pasti.' Jika isu jelas, tulis satu konflik dasar berdasarkan REBT atau WDEP.",
-      "Tindakan/Intervensi tidak perlu dijana.",
-      "Huraian tindakan mesti ditulis sebagai 4 hingga 6 point form. Setiap point mesti bermula dengan '- GBK', '- Klien', atau '- Murid'. Jangan tulis perenggan panjang.",
+      "Jangan gunakan perkataan nakal, degil, ganas, bermasalah, malas, ADHD, anxiety, depression, trauma, atau hyperaktif.",
+      "Huraian Tindakan / Intervensi mesti menjadi array dengan 4 hingga 6 ayat ringkas.",
+      "Setiap item huraian_tindakan_intervensi mesti bermula dengan 'GBK' atau 'Klien'.",
+      "Sesi awal jangan terus menulis penyelesaian. Fasa Membina Hubungan hanya tulis bina hubungan, tujuan sesi, keselesaan klien dan perkongsian awal.",
+      "Fasa Penerokaan Masalah tulis soalan terbuka serta penerokaan perasaan, pemikiran dan situasi.",
+      "Fasa Mengenal Pasti Masalah tulis masalah utama, kesan tingkah laku serta kaitan pemikiran, perasaan dan tingkah laku.",
+      "Fasa Pemilihan Strategi dan Tindakan baru tulis strategi, pilihan tindakan, latihan dan komitmen.",
+      "Fasa Penamatan dan Susulan tulis rumusan, penamatan dan susulan.",
+      "Gaya mesti neutral, rasmi, ringkas dan sesuai untuk laporan kaunseling sekolah rendah.",
       privacyRule,
       theoryRule
     ].join(" "),
     userPrompt: [
-      `Kes murid dalam Bahasa Cina: ${caseDescription}`,
+      `Kes murid dalam Bahasa Cina atau nota guru: ${caseDescription}`,
       `Jumlah sesi diminta: ${sessionCount}.`,
       `Fasa yang diliputi oleh keseluruhan set sesi ini: ${describePhases(phases)}.`,
-      `Jana laporan untuk Sesi ${currentRange.startSession} hingga ${currentRange.endSession}.`,
-      "Agihkan perkembangan sesi secara munasabah berdasarkan fasa yang dipilih. Jangan paksa satu batch kepada satu fasa tertentu kecuali maklumat kes benar-benar menuntut begitu.",
-      commonFields
-        ? `Gunakan commonFields ini secara tepat untuk semua sesi dalam batch ini: ${JSON.stringify(commonFields)}.`
-        : "Jana commonFields.perkara dan commonFields.persoalan berdasarkan keseluruhan kes.",
-      "Jana commonFields sekali sahaja untuk keseluruhan set sesi. commonFields.perkara dan commonFields.persoalan akan digunakan semula untuk semua sesi.",
-      "Setiap sesi hanya perlu mengandungi sessionNumber, huraianBullets, theoryUsed, continuityNote.",
-      "commonFields.perkara mesti merumuskan isu utama atau tujuan rujukan, bukan tajuk proses sesi.",
-      "commonFields.persoalan mesti menjadi punca utama atau konflik dasar dalam bentuk ayat penyata.",
-      "Contoh perkara yang baik: 'Murid dirujuk kerana guru bimbang tentang perubahan fizikal murid.'",
-      "Contoh persoalan yang baik jika belum pasti: 'Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai.'",
-      "Contoh persoalan yang baik jika isu jelas: 'Klien berasa tidak selesa apabila isu peribadi diberi perhatian oleh guru dan masih belum dapat menyatakan punca emosi dengan jelas.'",
-      "Contoh yang dilarang: 'Meneroka Isu Rujukan dan Membina Hubungan' dan 'Apakah punca kebimbangan guru terhadap klien?'",
-      "huraianBullets mesti mengandungi 4 hingga 6 ayat ringkas dan setiap ayat sudah tanpa simbol bullet tambahan.",
-      "Kesinambungan dengan sesi terdahulu mesti jelas dalam continuityNote dan dalam huraian jika sesi bukan sesi pertama.",
-      `Ringkasan sesi terdahulu:\n${previousSummary}`
+      `Jana JSON untuk Sesi ${currentRange.startSession} hingga ${currentRange.endSession}.`,
+      stablePerkara
+        ? `Gunakan Perkara asal ini untuk sesi dalam batch ini kecuali input jelas memerlukan perubahan: ${stablePerkara}.`
+        : "Tentukan Perkara asal sebagai sebab ringkas murid dirujuk atau dipanggil.",
+      "Jika beberapa sesi dijana, Persoalan boleh berkembang mengikut fasa, tetapi mesti kekal berdasarkan maklumat guru dan sesi terdahulu.",
+      `Ringkasan sesi terdahulu:\n${previousSummary}`,
+      `Semakan terdahulu:\n${retryAdvice}`,
+      "Output mesti valid JSON tanpa HTML atau markdown.",
+      'Format wajib: {"sessions":[{"sesi":1,"teori":"TIADA","perkara":"","persoalan":"","huraian_tindakan_intervensi":["GBK...","Klien...","GBK...","GBK..."]}]}'
     ].join("\n\n")
   };
 }
@@ -213,14 +231,6 @@ export function getReportSchema(range) {
   return {
     type: "object",
     properties: {
-      commonFields: {
-        type: "object",
-        properties: {
-          perkara: { type: "string" },
-          persoalan: { type: "string" }
-        },
-        required: ["perkara", "persoalan"]
-      },
       sessions: {
         type: "array",
         minItems: expectedCount,
@@ -228,50 +238,90 @@ export function getReportSchema(range) {
         items: {
           type: "object",
           properties: {
-            sessionNumber: { type: "integer" },
-            huraianBullets: {
+            sesi: { type: "integer" },
+            teori: {
+              type: "string",
+              enum: APPROACH_VALUES
+            },
+            perkara: { type: "string" },
+            persoalan: { type: "string" },
+            huraian_tindakan_intervensi: {
               type: "array",
               minItems: 4,
               maxItems: 6,
               items: { type: "string" }
-            },
-            theoryUsed: {
-              type: "string",
-              enum: ["REBT", "WDEP"]
-            },
-            continuityNote: { type: "string" }
+            }
           },
           required: [
-            "sessionNumber",
-            "huraianBullets",
-            "theoryUsed",
-            "continuityNote"
+            "sesi",
+            "teori",
+            "perkara",
+            "persoalan",
+            "huraian_tindakan_intervensi"
           ]
         }
       }
     },
-    required: ["commonFields", "sessions"]
+    required: ["sessions"]
   };
 }
 
-export function normaliseSession(session, commonFields = {}) {
-  const hasBulletArray = Array.isArray(session.huraianBullets);
-  const bullets = hasBulletArray
-    ? session.huraianBullets
-        .map((item) => String(item || "").trim())
-        .filter(Boolean)
-        .map((item) => (item.startsWith("-") ? item : `- ${item}`))
-    : [];
+export function normaliseSession(session, stableFields = {}) {
+  const huraianArray = Array.isArray(session.huraian_tindakan_intervensi)
+    ? session.huraian_tindakan_intervensi
+    : Array.isArray(session.huraianBullets)
+      ? session.huraianBullets
+      : null;
+  const huraian = huraianArray
+    ? huraianArray.map((item) => String(item || "").trim()).filter(Boolean)
+    : coercePointFormLines(
+        session.huraianTindakanIntervensi || session.huraian || ""
+      );
+  const sesi = Number(session.sesi || session.sessionNumber);
+  const teori = String(session.teori || session.theoryUsed || "")
+    .trim()
+    .toUpperCase();
 
   return {
-    sessionNumber: Number(session.sessionNumber),
-    perkara: String(session.perkara || commonFields.perkara || "").trim(),
-    persoalan: String(session.persoalan || commonFields.persoalan || "").trim(),
-    huraianTindakanIntervensi: bullets.join("\n").trim(),
-    hasBulletArray,
-    theoryUsed: String(session.theoryUsed || "").trim().toUpperCase(),
+    sesi,
+    sessionNumber: sesi,
+    teori,
+    theoryUsed: teori,
+    perkara: String(stableFields.perkara || session.perkara || "").trim(),
+    persoalan: String(session.persoalan || "").trim(),
+    huraian_tindakan_intervensi: huraian,
+    huraianTindakanIntervensi: huraian.join("\n").trim(),
+    hasHuraianArray: Boolean(huraianArray),
+    hasBulletArray: Boolean(huraianArray),
     continuityNote: String(session.continuityNote || "").trim()
   };
+}
+
+export function buildFallbackSession(sesi, teori = "REBT", stablePerkara = "") {
+  return {
+    sesi,
+    teori: ALLOWED_APPROACHES.has(teori) ? teori : "TIADA",
+    perkara: stablePerkara || "Murid hadir berkaitan isu yang dikongsikan.",
+    persoalan:
+      "Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya.",
+    huraian_tindakan_intervensi: [
+      "GBK menyambut kehadiran klien dengan mesra dan membina hubungan awal.",
+      "GBK menerangkan tujuan sesi supaya klien berasa lebih selesa.",
+      "Klien diberi ruang untuk berkongsi perkara awal mengikut kesediaannya.",
+      "GBK merumuskan perkongsian awal dan memaklumkan sesi akan diteruskan."
+    ]
+  };
+}
+
+function coercePointFormLines(value) {
+  const text = String(value || "")
+    .replace(/\s*-\s+(?=(GBK|Klien)\b)/gi, "\n")
+    .replace(/\.\s*(?=(GBK|Klien)\b)/g, ".\n");
+
+  return text
+    .split("\n")
+    .map((line) => line.trim().replace(/^[-*]\s*/, ""))
+    .filter(Boolean);
 }
 
 export function validateSessionBatch({
@@ -306,11 +356,10 @@ export function validateSessionBatch({
     const combinedText = [
       session.perkara,
       session.persoalan,
-      session.huraianTindakanIntervensi,
-      session.continuityNote
+      session.huraian_tindakan_intervensi.join(" ")
     ].join(" ");
 
-    if (session.sessionNumber !== expectedSessionNumber) {
+    if (session.sesi !== expectedSessionNumber) {
       issues.push(`${label}: nombor sesi tidak tepat.`);
     }
 
@@ -324,11 +373,11 @@ export function validateSessionBatch({
     );
     if (processTitleWord) {
       issues.push(
-        `${label}: Perkara perlu menjadi tajuk isu utama, bukan proses sesi (${processTitleWord}).`
+        `${label}: Perkara perlu menjadi sebab rujukan ringkas, bukan proses sesi (${processTitleWord}).`
       );
     }
 
-    if (session.perkara.length > 180) {
+    if (session.perkara.length > 160) {
       issues.push(`${label}: Perkara terlalu panjang dan perlu diringkaskan.`);
     }
 
@@ -336,7 +385,7 @@ export function validateSessionBatch({
       issues.push(`${label}: Persoalan tidak diisi.`);
     }
 
-    if (/[?？]/.test(session.persoalan)) {
+    if (/[?锛焆]/.test(session.persoalan)) {
       issues.push(`${label}: Persoalan mesti ditulis sebagai kenyataan, bukan soalan.`);
     }
 
@@ -350,94 +399,85 @@ export function validateSessionBatch({
       );
     }
 
-    const questionStarterCount = QUESTION_STARTERS.filter((starter) =>
-      persoalanLower.includes(starter)
-    ).length;
-    if (questionStarterCount > 1) {
-      issues.push(`${label}: Persoalan tidak boleh menjadi gabungan beberapa soalan.`);
+    if (normaliseComparableText(session.persoalan) === normaliseComparableText(session.perkara)) {
+      issues.push(`${label}: Persoalan tidak boleh mengulang Perkara.`);
     }
 
-    if (session.persoalan.length > 260) {
+    if (session.persoalan.length > 320) {
       issues.push(`${label}: Persoalan terlalu panjang dan perlu diringkaskan.`);
     }
 
-    if (!session.huraianTindakanIntervensi) {
-      issues.push(`${label}: Huraian Tindakan/Intervensi tidak diisi.`);
+    if (!session.hasHuraianArray) {
+      issues.push(`${label}: huraian_tindakan_intervensi mesti dijana sebagai array.`);
     }
 
-    if (!session.hasBulletArray) {
+    const huraianCount = session.huraian_tindakan_intervensi.length;
+    if (huraianCount < 4 || huraianCount > 6) {
       issues.push(
-        `${label}: Huraian mesti dijana sebagai bullet array, bukan perenggan biasa.`
+        `${label}: huraian_tindakan_intervensi mesti mempunyai 4 hingga 6 item.`
       );
     }
 
-    if (!ALLOWED_THEORIES.has(session.theoryUsed)) {
+    const invalidStarter = session.huraian_tindakan_intervensi.find(
+      (line) => !/^(GBK|Klien)\b/i.test(line)
+    );
+    if (invalidStarter) {
       issues.push(
-        `${label}: theoryUsed mesti REBT atau WDEP, tetapi diterima '${session.theoryUsed || "kosong"}'.`
+        `${label}: Setiap huraian mesti bermula dengan GBK atau Klien.`
       );
     }
 
-    if (theoryMode === "rebt" && session.theoryUsed !== "REBT") {
+    if (!ALLOWED_APPROACHES.has(session.teori)) {
+      issues.push(
+        `${label}: teori mesti TIADA, REBT, WDEP atau REBT_WDEP, tetapi diterima '${session.teori || "kosong"}'.`
+      );
+    }
+
+    if (theoryMode === "rebt" && session.teori !== "REBT") {
       issues.push(`${label}: teori selain REBT telah digunakan.`);
     }
 
-    if (theoryMode === "wdep" && session.theoryUsed !== "WDEP") {
+    if (theoryMode === "wdep" && session.teori !== "WDEP") {
       issues.push(`${label}: teori selain WDEP telah digunakan.`);
     }
 
-    const pointLines = session.huraianTindakanIntervensi
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const pointLikeLines = pointLines.filter((line) => /^[-*]/.test(line));
-
-    if (pointLines.length < 3 || pointLikeLines.length !== pointLines.length) {
-      issues.push(`${label}: Huraian perlu ditulis sepenuhnya dalam point form.`);
+    if (normaliseTheoryMode(theoryMode) === "none" && session.teori !== "TIADA") {
+      issues.push(`${label}: pendekatan tanpa teori khusus mesti menggunakan teori TIADA.`);
     }
 
-    const pointStarterLines = pointLines.filter((line) =>
-      /^-\s*(GBK|Klien|Murid)\b/i.test(line)
-    );
-    if (pointStarterLines.length !== pointLines.length) {
-      issues.push(
-        `${label}: Setiap point huraian mesti bermula dengan GBK, Klien, atau Murid.`
-      );
-    }
-
-    if (expectedSessionNumber > 1 && !session.continuityNote) {
-      issues.push(`${label}: continuityNote perlu diisi untuk kesinambungan sesi.`);
-    }
-
-    if (
-      expectedSessionNumber > 1 &&
-      session.continuityNote &&
-      !/sesi|minggu lepas|perkembangan/i.test(session.continuityNote)
-    ) {
-      warnings.push(
-        `${label}: continuityNote ada tetapi kesinambungan tidak begitu jelas.`
-      );
+    if (theoryMode === "combined" && session.teori !== "REBT_WDEP") {
+      issues.push(`${label}: pendekatan gabungan mesti menggunakan teori REBT_WDEP.`);
     }
 
     const bannedTheory = BANNED_THEORY_WORDS.find((word) =>
       combinedText.toLowerCase().includes(word.toLowerCase())
     );
-
     if (bannedTheory) {
       issues.push(`${label}: mengandungi teori yang tidak dibenarkan (${bannedTheory}).`);
+    }
+
+    const bannedWord = BANNED_WORDS.find((word) =>
+      combinedText.toLowerCase().includes(word.toLowerCase())
+    );
+    if (bannedWord) {
+      issues.push(`${label}: mengandungi perkataan yang tidak dibenarkan (${bannedWord}).`);
+    }
+
+    if (/<\/?[a-z][\s\S]*>/i.test(combinedText)) {
+      issues.push(`${label}: tidak boleh mengandungi HTML.`);
+    }
+
+    if (/(^|\s)(#{1,6}\s|\*\*|__|```|\|)/m.test(combinedText)) {
+      issues.push(`${label}: tidak boleh mengandungi markdown.`);
     }
 
     const diagnosisWord = DIAGNOSIS_WORDS.find((word) =>
       combinedText.toLowerCase().includes(word.toLowerCase())
     );
-
     if (diagnosisWord) {
       warnings.push(
         `${label}: semak semula frasa berkaitan diagnosis atau label klinikal (${diagnosisWord}).`
       );
-    }
-
-    if (!/(GBK|Klien|Murid)/i.test(session.huraianTindakanIntervensi)) {
-      warnings.push(`${label}: gaya ayat mungkin kurang menyerupai contoh guru.`);
     }
 
     const sensitiveWord = SENSITIVE_INFERENCE_WORDS.find((word) =>
@@ -458,13 +498,47 @@ export function validateSessionBatch({
   };
 }
 
+function buildTheoryRule(theoryMode, theoryPreference) {
+  const mode = normaliseTheoryMode(theoryMode);
+
+  if (mode === "rebt") {
+    return "Pendekatan dipilih: REBT sahaja. Medan teori mesti 'REBT'.";
+  }
+
+  if (mode === "wdep") {
+    return "Pendekatan dipilih: Teori Realiti (WDEP) sahaja. Medan teori mesti 'WDEP'.";
+  }
+
+  if (mode === "combined") {
+    return "Pendekatan dipilih: Gabungkan REBT dan WDEP secara ringkas jika sesuai. Medan teori mesti 'REBT_WDEP'. Jangan tulis gaya buku teks.";
+  }
+
+  if (mode === "auto") {
+    return `Pendekatan dipilih: pilih sama ada REBT atau WDEP jika benar-benar membantu. Utamakan ${theoryPreference || "REBT"} jika sesuai.`;
+  }
+
+  return "Pendekatan dipilih: Tanpa teori khusus. Medan teori mesti 'TIADA'. Tulis secara umum sebagai laporan kaunseling sekolah tanpa menyebut REBT, WDEP, pemikiran tidak rasional, kehendak, atau istilah teori.";
+}
+
+function normaliseTheoryMode(theoryMode) {
+  return String(theoryMode || "none").toLowerCase();
+}
+
+function normaliseComparableText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function buildQualityAdvice(validation) {
   if (validation.ok && validation.warnings.length === 0) {
-    return "Laporan nampak lengkap untuk disemak akhir oleh guru.";
+    return "Draf medan sesi lengkap untuk disemak akhir oleh guru.";
   }
 
   if (!validation.ok) {
-    return "Cadangan: jana semula atau tukar model sebelum digunakan.";
+    return "Draf dipaparkan untuk semakan. Sila baiki bahagian yang diberi tanda sebelum digunakan.";
   }
 
   return "Cadangan: semak manual bahagian yang diberi amaran sebelum digunakan.";

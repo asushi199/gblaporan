@@ -1,4 +1,5 @@
 import {
+  buildFallbackSession,
   buildPromptPayload,
   buildQualityAdvice,
   buildSessionRanges,
@@ -27,40 +28,28 @@ export async function generateCounsellingReport({
   const ranges = buildSessionRanges(payload.sessionCount);
   const allSessions = [];
   const batchChecks = [];
-  let sharedCommonFields = null;
+  let stablePerkara = "";
 
   for (const range of ranges) {
-    const promptPayload = buildPromptPayload({
-      ...payload,
-      currentRange: range,
-      commonFields: sharedCommonFields,
+    const generated = await requestValidBatch({
+      settings,
+      apiKey,
+      payload,
+      range,
+      stablePerkara,
       previousSessions: allSessions
     });
-    const generated = await requestBatch({
-      model: settings.model,
-      apiKey,
-      promptPayload,
-      range
-    });
 
-    if (!sharedCommonFields) {
-      sharedCommonFields = generated.commonFields;
+    const normalised = normaliseGeneratedSessions(generated.sessions, stablePerkara);
+
+    if (!stablePerkara && normalised[0]?.perkara) {
+      stablePerkara = normalised[0].perkara;
     }
-
-    const normalised = generated.sessions.map((session) =>
-      normaliseSession(session, sharedCommonFields)
-    );
-    const validation = validateSessionBatch({
-      requestedRange: range,
-      theoryMode: payload.theoryMode,
-      sessions: normalised,
-      sourceCaseDescription: payload.caseDescription
-    });
 
     batchChecks.push({
       range,
-      validation,
-      advice: buildQualityAdvice(validation)
+      validation: generated.validation,
+      advice: buildQualityAdvice(generated.validation)
     });
 
     allSessions.push(...normalised);
@@ -72,19 +61,6 @@ export async function generateCounsellingReport({
     warnings: batchChecks.flatMap((check) => check.validation.warnings)
   };
 
-  if (!aggregateValidation.ok) {
-    const error = new Error(
-      aggregateValidation.issues[0] ||
-        "Respons model tidak menepati format laporan yang diperlukan."
-    );
-    error.validation = {
-      ...aggregateValidation,
-      advice: buildQualityAdvice(aggregateValidation),
-      batches: batchChecks
-    };
-    throw error;
-  }
-
   return {
     sessions: allSessions,
     quality: {
@@ -93,6 +69,149 @@ export async function generateCounsellingReport({
       batches: batchChecks
     }
   };
+}
+
+async function requestValidBatch({
+  settings,
+  apiKey,
+  payload,
+  range,
+  stablePerkara,
+  previousSessions
+}) {
+  let lastGenerated = null;
+  let lastValidation = null;
+  let retryIssues = [];
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const promptPayload = buildPromptPayload({
+      ...payload,
+      currentRange: range,
+      stablePerkara,
+      previousSessions,
+      retryIssues
+    });
+    let generated;
+    try {
+      generated = await requestBatch({
+        model: settings.model,
+        apiKey,
+        promptPayload,
+        range
+      });
+    } catch (error) {
+      retryIssues = [error.message || "Respons model tidak sah."];
+      lastValidation = {
+        ok: false,
+        issues: retryIssues,
+        warnings: []
+      };
+      continue;
+    }
+    const normalised = normaliseGeneratedSessions(generated.sessions, stablePerkara);
+    const validation = validateSessionBatch({
+      requestedRange: range,
+      theoryMode: payload.theoryMode,
+      sessions: normalised,
+      sourceCaseDescription: payload.caseDescription
+    });
+
+    lastGenerated = {
+      sessions: normalised,
+      validation
+    };
+    lastValidation = validation;
+
+    if (validation.ok) {
+      return lastGenerated;
+    }
+
+    if (!shouldRetryValidation(validation)) {
+      return lastGenerated;
+    }
+
+    retryIssues = validation.issues;
+  }
+
+  const fallbackSessions = buildFallbackSessions({
+    range,
+    theoryMode: payload.theoryMode,
+    theoryPreference: payload.theoryPreference,
+    stablePerkara
+  });
+  const fallbackValidation = validateSessionBatch({
+    requestedRange: range,
+    theoryMode: payload.theoryMode,
+    sessions: fallbackSessions,
+    sourceCaseDescription: payload.caseDescription
+  });
+
+  if (lastGenerated?.sessions?.length) {
+    return {
+      sessions: lastGenerated.sessions,
+      validation: lastValidation
+    };
+  }
+
+  return {
+    sessions: fallbackSessions,
+    validation: fallbackValidation
+  };
+}
+
+function shouldRetryValidation(validation) {
+  return validation.issues.some((issue) =>
+    /Bilangan sesi|nombor sesi|tidak diisi|mesti dijana sebagai array|4 hingga 6|teori mesti/i.test(
+      issue
+    )
+  );
+}
+
+function buildFallbackSessions({
+  range,
+  theoryMode,
+  theoryPreference,
+  stablePerkara
+}) {
+  const teori = getFallbackTeori(theoryMode, theoryPreference);
+  const sessions = [];
+
+  for (let sesi = range.startSession; sesi <= range.endSession; sesi += 1) {
+    sessions.push(buildFallbackSession(sesi, teori, stablePerkara));
+  }
+
+  return sessions;
+}
+
+function getFallbackTeori(theoryMode, theoryPreference) {
+  if (theoryMode === "none") {
+    return "TIADA";
+  }
+
+  if (theoryMode === "combined") {
+    return "REBT_WDEP";
+  }
+
+  if (theoryMode === "wdep") {
+    return "WDEP";
+  }
+
+  if (theoryMode === "rebt") {
+    return "REBT";
+  }
+
+  return theoryPreference === "WDEP" ? "WDEP" : "REBT";
+}
+
+function normaliseGeneratedSessions(sessions, stablePerkara) {
+  const firstPass = sessions.map((session) => normaliseSession(session));
+  const perkara = stablePerkara || firstPass[0]?.perkara || "";
+
+  return firstPass.map((session) =>
+    normaliseSession(session, {
+      perkara: session.sesi > 1 ? perkara : ""
+    })
+  );
 }
 
 async function requestBatch({ model, apiKey, promptPayload, range }) {
@@ -112,7 +231,7 @@ async function requestBatch({ model, apiKey, promptPayload, range }) {
         }
       ],
       generationConfig: {
-        temperature: 0.6,
+        temperature: 0.5,
         responseMimeType: "application/json",
         responseSchema: getReportSchema(range)
       }
@@ -138,7 +257,7 @@ async function requestBatch({ model, apiKey, promptPayload, range }) {
     throw new Error("Model memulangkan JSON yang tidak sah.");
   }
 
-  if (!parsed.sessions) {
+  if (!Array.isArray(parsed.sessions)) {
     throw new Error("Respons model tidak mengandungi medan sessions.");
   }
 

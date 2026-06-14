@@ -1,9 +1,13 @@
 const settingsForm = document.querySelector("#settingsForm");
+const accessForm = document.querySelector("#accessForm");
 const generateForm = document.querySelector("#generateForm");
+const settingsPanel = settingsForm.closest(".panel");
+const generatePanel = generateForm.closest(".panel");
 const modelSelect = document.querySelector("#modelSelect");
 const apiKeyInput = document.querySelector("#apiKeyInput");
+const accessPasswordInput = document.querySelector("#accessPasswordInput");
+const accessStatus = document.querySelector("#accessStatus");
 const theoryMode = document.querySelector("#theoryMode");
-const theoryPreference = document.querySelector("#theoryPreference");
 const privacyMode = document.querySelector("#privacyMode");
 const modelBadge = document.querySelector("#modelBadge");
 const apiStatus = document.querySelector("#apiStatus");
@@ -16,22 +20,79 @@ const serverKeyHint = document.querySelector("#serverKeyHint");
 const sessionCountInput = document.querySelector("#sessionCount");
 const phaseSelections = document.querySelector("#phaseSelections");
 const phaseHelp = document.querySelector("#phaseHelp");
+const historyPanel = document.querySelector("#historyPanel");
+const historyList = document.querySelector("#historyList");
+const refreshHistoryButton = document.querySelector("#refreshHistoryButton");
 
 let availablePhases = [];
+let accessPassword = window.localStorage.getItem("autoreportAccessPassword") || "";
+let accessRequired = false;
 
 boot();
 
 async function boot() {
-  await loadSettings();
+  await loadAccessState();
+  accessForm.addEventListener("submit", handleAccessSubmit);
   settingsForm.addEventListener("submit", handleSaveSettings);
   generateForm.addEventListener("submit", handleGenerate);
   privacyMode.addEventListener("change", syncPrivacyHint);
+  refreshHistoryButton.addEventListener("click", loadHistory);
   syncPrivacyHint();
 }
 
-async function loadSettings() {
-  const response = await fetch("/api/settings");
+async function loadAccessState() {
+  const response = await fetch("/api/access");
   const data = await response.json();
+  accessRequired = Boolean(data.accessRequired);
+  accessForm.classList.toggle("hidden", !accessRequired);
+  syncAccessLock(accessRequired && !accessPassword);
+
+  if (!accessRequired || accessPassword) {
+    try {
+      await loadSettings();
+      await loadHistory();
+      syncAccessLock(false);
+    } catch (error) {
+      accessPassword = "";
+      window.localStorage.removeItem("autoreportAccessPassword");
+      accessStatus.textContent = error.message;
+      accessStatus.classList.remove("hidden");
+      syncAccessLock(true);
+    }
+  }
+}
+
+async function handleAccessSubmit(event) {
+  event.preventDefault();
+  accessPassword = accessPasswordInput.value.trim();
+  window.localStorage.setItem("autoreportAccessPassword", accessPassword);
+  accessStatus.classList.add("hidden");
+
+  try {
+    await loadSettings();
+    await loadHistory();
+    syncAccessLock(false);
+  } catch (error) {
+    accessStatus.textContent = error.message;
+    accessStatus.classList.remove("hidden");
+  }
+}
+
+function syncAccessLock(locked) {
+  settingsPanel.classList.toggle("hidden", locked);
+  generatePanel.classList.toggle("hidden", locked);
+  historyPanel.classList.toggle("hidden", locked);
+}
+
+async function loadSettings() {
+  const response = await fetch("/api/settings", {
+    headers: accessHeaders()
+  });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Akses tidak berjaya.");
+  }
 
   modelSelect.innerHTML = data.availableModels
     .map((model) => `<option value="${model}">${model}</option>`)
@@ -40,7 +101,6 @@ async function loadSettings() {
 
   modelSelect.value = data.settings.model;
   theoryMode.value = data.settings.theoryMode;
-  theoryPreference.value = data.settings.theoryPreference;
   privacyMode.value = data.settings.privacyMode;
   modelBadge.textContent = data.settings.model;
   apiStatus.textContent = data.hasApiKey
@@ -57,18 +117,24 @@ async function handleSaveSettings(event) {
   const response = await fetch("/api/settings", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...accessHeaders()
     },
     body: JSON.stringify({
       model: modelSelect.value,
       apiKey: apiKeyInput.value,
       theoryMode: theoryMode.value,
-      theoryPreference: theoryPreference.value,
       privacyMode: privacyMode.value
     })
   });
 
   const data = await response.json();
+
+  if (!response.ok) {
+    apiStatus.textContent = data.error || "Tetapan tidak dapat disimpan.";
+    return;
+  }
+
   modelBadge.textContent = data.settings.model;
   apiStatus.textContent = data.apiKeyManagedByServer
     ? "Tetapan disimpan. API key diurus oleh pelayan."
@@ -103,14 +169,15 @@ async function handleGenerate(event) {
       phases: getSelectedPhases(),
       model: modelSelect.value,
       theoryMode: theoryMode.value,
-      theoryPreference: theoryPreference.value,
+      theoryPreference: "REBT",
       privacyMode: privacyMode.value
     };
 
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...accessHeaders()
       },
       body: JSON.stringify(payload)
     });
@@ -125,6 +192,7 @@ async function handleGenerate(event) {
 
     renderQuality(data.quality);
     renderSessions(data.sessions);
+    await loadHistory();
   } catch (error) {
     renderQuality(
       error.quality || {
@@ -137,6 +205,70 @@ async function handleGenerate(event) {
   } finally {
     setBusy(false);
   }
+}
+
+async function loadHistory() {
+  const response = await fetch("/api/history", {
+    headers: accessHeaders()
+  });
+  const data = await response.json();
+
+  if (!response.ok) {
+    historyPanel.classList.add("hidden");
+    return;
+  }
+
+  renderHistory(data.entries || []);
+}
+
+function renderHistory(entries) {
+  historyPanel.classList.remove("hidden");
+  historyList.innerHTML = "";
+
+  if (!entries.length) {
+    historyList.innerHTML = `<p class="history-meta">Belum ada sejarah jana.</p>`;
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const item = document.createElement("article");
+    item.className = "history-item";
+    item.innerHTML = `
+      <div>
+        <p><strong>${escapeHtml(entry.title || "Draf sesi kaunseling")}</strong></p>
+        <p class="history-meta">${escapeHtml(formatHistoryDate(entry.createdAt))} | ${Number(entry.sessionCount || 0)} sesi</p>
+      </div>
+      <div class="history-actions">
+        <button type="button" class="history-view">Lihat</button>
+        <button type="button" class="history-delete secondary-button">Padam</button>
+      </div>
+    `;
+
+    item.querySelector(".history-view").addEventListener("click", () => {
+      renderQuality(entry.quality || {
+        ok: true,
+        issues: [],
+        warnings: [],
+        advice: "Draf dimuatkan daripada sejarah."
+      });
+      renderSessions(entry.sessions || []);
+      window.scrollTo({ top: results.offsetTop - 16, behavior: "smooth" });
+    });
+
+    item.querySelector(".history-delete").addEventListener("click", async () => {
+      if (!window.confirm("Padam sejarah jana ini?")) {
+        return;
+      }
+
+      await fetch(`/api/history/${encodeURIComponent(entry.id)}`, {
+        method: "DELETE",
+        headers: accessHeaders()
+      });
+      await loadHistory();
+    });
+
+    historyList.appendChild(item);
+  });
 }
 
 function renderQuality(quality) {
@@ -158,39 +290,42 @@ function renderSessions(sessions) {
   const fields = [
     ["Perkara", "perkara"],
     ["Persoalan", "persoalan"],
-    ["Huraian Tindakan / Intervensi", "huraianTindakanIntervensi", true]
+    ["Huraian Tindakan / Intervensi", "huraian_tindakan_intervensi", true]
   ];
 
   results.innerHTML = "";
 
   sessions.forEach((session) => {
     const fragment = sessionTemplate.content.cloneNode(true);
-    fragment.querySelector("h2").textContent = `Sesi ${session.sessionNumber}`;
-    fragment.querySelector(".theory-tag").textContent = session.theoryUsed;
-    fragment.querySelector(".session-copy").addEventListener("click", async () => {
-      await navigator.clipboard.writeText(formatSessionForCopy(session));
-    });
+    const card = fragment.querySelector(".result-card");
+    fragment.querySelector("h2").textContent = `Sesi ${session.sesi || session.sessionNumber}`;
+    fragment.querySelector(".theory-tag").textContent = "Kandungan boleh diedit";
 
     const fieldList = fragment.querySelector(".field-list");
     fields.forEach(([label, key, isPointForm]) => {
       const value = isPointForm
-        ? formatPointForm(session[key] || "")
+        ? formatHuraian(session[key] || session.huraianTindakanIntervensi || "")
         : session[key] || "";
       const field = document.createElement("section");
       field.className = "field";
+      field.dataset.key = key;
       field.innerHTML = `
         <div class="field-top">
           <p class="field-name">${label}</p>
           <button class="field-copy" type="button">Salin</button>
         </div>
-        <p class="field-value">${escapeHtml(value)}</p>
+        <textarea class="field-value editable-field" rows="${isPointForm ? 6 : 2}">${escapeHtml(value)}</textarea>
       `;
 
       field.querySelector(".field-copy").addEventListener("click", async () => {
-        await navigator.clipboard.writeText(value);
+        await navigator.clipboard.writeText(field.querySelector(".field-value").value);
       });
 
       fieldList.appendChild(field);
+    });
+
+    fragment.querySelector(".session-copy").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(formatSessionForCopy(card));
     });
 
     results.appendChild(fragment);
@@ -258,6 +393,27 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function accessHeaders() {
+  return accessRequired
+    ? {
+        "X-Access-Password": accessPassword
+      }
+    : {};
+}
+
+function formatHistoryDate(value) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleString("ms-MY", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
 function formatPointForm(value) {
   return String(value || "")
     .replace(/\s+-\s+(?=(GBK|Klien|Murid)\b)/gi, "\n- ")
@@ -267,15 +423,32 @@ function formatPointForm(value) {
     .join("\n");
 }
 
-function formatSessionForCopy(session) {
+function formatHuraian(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return formatPointForm(value);
+}
+
+function getFieldValue(card, key) {
+  return card.querySelector(`.field[data-key="${key}"] .field-value`)?.value || "";
+}
+
+function formatSessionForCopy(card) {
   return [
+    card.querySelector("h2")?.textContent || "",
+    "",
     "Perkara",
-    session.perkara || "",
+    getFieldValue(card, "perkara"),
     "",
     "Persoalan",
-    session.persoalan || "",
+    getFieldValue(card, "persoalan"),
     "",
     "Huraian Tindakan / Intervensi",
-    formatPointForm(session.huraianTindakanIntervensi || "")
+    getFieldValue(card, "huraian_tindakan_intervensi")
   ].join("\n");
 }

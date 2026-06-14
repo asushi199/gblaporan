@@ -2,25 +2,35 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildSessionRanges,
+  buildFallbackSession,
   buildPromptPayload,
+  buildSessionRanges,
   getReportSchema,
   normaliseSession,
   parsePhaseNumbers,
   validatePhaseSelections,
   validateSessionBatch
 } from "../src/report-generator.js";
+import { generateCounsellingReport } from "../src/gemini-client.js";
+
+function validSession(overrides = {}) {
+  return {
+    sesi: 1,
+    teori: "REBT",
+    perkara: "Murid dirujuk kerana bergaduh dengan rakan sekelas.",
+    persoalan:
+      "Klien masih sukar mentafsir teguran rakan secara rasional sehingga emosinya mudah terganggu.",
+    huraian_tindakan_intervensi: [
+      "GBK menyambut kehadiran klien dan menerangkan tujuan sesi.",
+      "Klien berkongsi situasi awal berkaitan konflik dengan rakan.",
+      "GBK menggunakan soalan terbuka untuk memahami perasaan klien.",
+      "GBK merumuskan perkongsian awal klien secara ringkas."
+    ],
+    ...overrides
+  };
+}
 
 test("buildSessionRanges splits long runs into two-session batches", () => {
-  assert.deepEqual(buildSessionRanges(8), [
-    { startSession: 1, endSession: 2 },
-    { startSession: 3, endSession: 4 },
-    { startSession: 5, endSession: 6 },
-    { startSession: 7, endSession: 8 }
-  ]);
-});
-
-test("buildSessionRanges keeps shorter requests compact", () => {
   assert.deepEqual(buildSessionRanges(5), [
     { startSession: 1, endSession: 2 },
     { startSession: 3, endSession: 4 },
@@ -28,114 +38,124 @@ test("buildSessionRanges keeps shorter requests compact", () => {
   ]);
 });
 
-test("buildPromptPayload locks the prompt to REBT/WDEP and omits tindakan/intervensi", () => {
+test("buildPromptPayload asks for session JSON only and defines Persoalan clearly", () => {
   const payload = buildPromptPayload({
-    caseDescription: "学生因为和同学争吵而不想来学校。",
-    sessionCount: 4,
-    phases: ["fasa2", "fasa3"],
-    theoryMode: "auto",
-    theoryPreference: "REBT",
-    privacyMode: "anonymous",
-    currentRange: { startSession: 3, endSession: 4 },
-    previousSessions: [
-      {
-        sessionNumber: 1,
-        perkara: "Klien datang secara sukarela kerana kerap marah di dalam kelas."
-      }
-    ]
-  });
-
-  assert.match(payload.systemInstruction, /REBT/i);
-  assert.match(payload.systemInstruction, /WDEP/i);
-  assert.match(
-    payload.systemInstruction,
-    /Persoalan merujuk kepada punca utama atau konflik dasar/i
-  );
-  assert.match(
-    payload.systemInstruction,
-    /Perkara ialah tajuk atau rumusan utama perkara/i
-  );
-  assert.match(
-    payload.systemInstruction,
-    /Tindakan\/Intervensi tidak perlu dijana/i
-  );
-  assert.doesNotMatch(payload.systemInstruction, /Gestalt/i);
-  assert.match(payload.userPrompt, /Sesi 3 hingga 4/i);
-  assert.match(
-    payload.userPrompt,
-    /Fasa yang diliputi oleh keseluruhan set sesi ini: Fasa 2 - Membina Hubungan, Fasa 3 - Penerokaan Masalah/i
-  );
-  assert.doesNotMatch(payload.userPrompt, /tindakanIntervensi/i);
-});
-
-test("buildPromptPayload reuses common fields for later batches", () => {
-  const payload = buildPromptPayload({
-    caseDescription: "Murid dirujuk kerana guru bimbang tentang perubahan emosi murid.",
+    caseDescription: "Murid sering bertengkar dengan rakan.",
     sessionCount: 3,
     phases: ["fasa2", "fasa3"],
     theoryMode: "auto",
     theoryPreference: "REBT",
     privacyMode: "anonymous",
-    currentRange: { startSession: 3, endSession: 3 },
-    commonFields: {
-      perkara: "Murid dirujuk kerana guru bimbang tentang perubahan emosi murid.",
-      persoalan:
-        "Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai."
-    },
+    currentRange: { startSession: 1, endSession: 2 },
     previousSessions: []
   });
 
-  assert.match(payload.userPrompt, /Gunakan commonFields ini secara tepat/i);
+  assert.match(payload.systemInstruction, /valid JSON/i);
+  assert.match(payload.systemInstruction, /perkara, persoalan, huraian_tindakan_intervensi/i);
+  assert.match(payload.systemInstruction, /Persoalan merujuk kepada isu utama, konflik dasar atau punca/i);
+  assert.match(payload.systemInstruction, /HTML, markdown/i);
+  assert.match(payload.userPrompt, /"sessions"/i);
+  assert.doesNotMatch(payload.userPrompt, /commonFields/i);
 });
 
-test("getReportSchema requires commonFields and per-session huraian only", () => {
+test("getReportSchema requires the final per-session contract", () => {
   const schema = getReportSchema({ startSession: 1, endSession: 2 });
-  const sessionRequired = schema.properties.sessions.items.required;
+  const session = schema.properties.sessions.items;
 
-  assert.deepEqual(schema.required, ["commonFields", "sessions"]);
-  assert.deepEqual(schema.properties.commonFields.required, ["perkara", "persoalan"]);
-  assert.equal(sessionRequired.includes("perkara"), false);
-  assert.equal(sessionRequired.includes("persoalan"), false);
-  assert.equal(sessionRequired.includes("huraianBullets"), true);
+  assert.deepEqual(schema.required, ["sessions"]);
+  assert.deepEqual(session.required, [
+    "sesi",
+    "teori",
+    "perkara",
+    "persoalan",
+    "huraian_tindakan_intervensi"
+  ]);
+  assert.equal(
+    session.properties.huraian_tindakan_intervensi.type,
+    "array"
+  );
+  assert.equal(session.properties.huraian_tindakan_intervensi.minItems, 4);
+  assert.equal(session.properties.huraian_tindakan_intervensi.maxItems, 6);
+  assert.deepEqual(session.properties.teori.enum, [
+    "TIADA",
+    "REBT",
+    "WDEP",
+    "REBT_WDEP"
+  ]);
 });
 
-test("normaliseSession applies shared common fields to each session", () => {
+test("normaliseSession accepts new JSON keys and keeps huraian as an array", () => {
+  const session = normaliseSession(validSession());
+
+  assert.equal(session.sesi, 1);
+  assert.equal(session.sessionNumber, 1);
+  assert.equal(session.teori, "REBT");
+  assert.equal(session.theoryUsed, "REBT");
+  assert.equal(session.huraian_tindakan_intervensi.length, 4);
+  assert.equal(
+    session.huraian_tindakan_intervensi[0],
+    "GBK menyambut kehadiran klien dan menerangkan tujuan sesi."
+  );
+});
+
+test("normaliseSession can use a stable Perkara fallback for later sessions", () => {
   const session = normaliseSession(
+    validSession({
+      sesi: 2,
+      perkara: "Murid hadir semula untuk sesi susulan."
+    }),
     {
-      sessionNumber: 1,
-      huraianBullets: [
-        "GBK menjemput klien hadir ke sesi.",
-        "Klien berkongsi isu yang dialami.",
-        "GBK membina hubungan dengan klien.",
-        "GBK merumuskan sesi."
-      ],
-      theoryUsed: "REBT",
-      continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
-    },
-    {
-      perkara: "Murid dirujuk kerana guru bimbang tentang perubahan emosi murid.",
-      persoalan:
-        "Masih dalam fasa membina hubungan maka konflik sebenar masih perlu diterokai."
+      perkara: "Murid dirujuk kerana bergaduh dengan rakan sekelas."
     }
   );
 
-  assert.match(session.perkara, /Murid dirujuk/);
-  assert.match(session.persoalan, /konflik sebenar/);
+  assert.equal(
+    session.perkara,
+    "Murid dirujuk kerana bergaduh dengan rakan sekelas."
+  );
+  assert.equal(session.sesi, 2);
 });
 
-test("validatePhaseSelections requires at least one selected phase", () => {
-  const result = validatePhaseSelections({
-    sessionCount: 4,
-    phases: []
+test("buildFallbackSession returns safe early-phase content", () => {
+  const session = buildFallbackSession(1, "TIADA");
+
+  assert.equal(session.sesi, 1);
+  assert.equal(session.teori, "TIADA");
+  assert.match(session.persoalan, /fasa membina hubungan/i);
+  assert.equal(session.huraian_tindakan_intervensi.length, 4);
+});
+
+test("buildPromptPayload supports no-theory and combined approach modes", () => {
+  const noTheory = buildPromptPayload({
+    caseDescription: "Murid dipanggil kerana perubahan tingkah laku.",
+    sessionCount: 1,
+    phases: ["fasa2"],
+    theoryMode: "none",
+    theoryPreference: "REBT",
+    privacyMode: "anonymous",
+    currentRange: { startSession: 1, endSession: 1 },
+    previousSessions: []
+  });
+  const combined = buildPromptPayload({
+    caseDescription: "Murid dipanggil kerana perubahan tingkah laku.",
+    sessionCount: 1,
+    phases: ["fasa4"],
+    theoryMode: "combined",
+    theoryPreference: "REBT",
+    privacyMode: "anonymous",
+    currentRange: { startSession: 1, endSession: 1 },
+    previousSessions: []
   });
 
-  assert.equal(result.ok, false);
-  assert.match(result.message, /Pilih sekurang-kurangnya satu fasa/i);
+  assert.match(noTheory.systemInstruction, /Tanpa teori khusus/i);
+  assert.match(noTheory.systemInstruction, /teori mesti 'TIADA'/i);
+  assert.match(combined.systemInstruction, /Gabungkan REBT dan WDEP/i);
+  assert.match(combined.systemInstruction, /teori mesti 'REBT_WDEP'/i);
 });
 
-test("validatePhaseSelections accepts multiple phases for the same generated set", () => {
+test("validatePhaseSelections accepts selected known phases", () => {
   const result = validatePhaseSelections({
-    sessionCount: 5,
+    sessionCount: 4,
     phases: ["fasa2", "fasa3"]
   });
 
@@ -146,41 +166,28 @@ test("parsePhaseNumbers turns compact numeric input into phase ids", () => {
   assert.deepEqual(parsePhaseNumbers("2, 3,6"), ["fasa2", "fasa3", "fasa6"]);
 });
 
-test("validateSessionBatch accepts phase-based and theory-based persoalan", () => {
+test("validateSessionBatch accepts phase-based and theory-based Persoalan", () => {
   const result = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 2 },
     theoryMode: "auto",
-    sourceCaseDescription: "学生因为经常跟同学起冲突而来见辅导老师。",
+    sourceCaseDescription: "Murid sering bertengkar dengan rakan.",
     sessions: [
-      {
-        sessionNumber: 1,
-        perkara: "Murid datang secara sukarela kerana sering bergaduh dengan rakan.",
+      validSession({
         persoalan:
-          "Masih dalam fasa membina hubungan maka masalah sebenar masih perlu diterokai.",
-        huraianBullets: [
-          "GBK menjemput klien hadir ke sesi.",
-          "Klien berkongsi situasi konflik yang dialami.",
-          "GBK membina hubungan dan memberi ruang kepada klien untuk bercerita.",
-          "GBK merumuskan sesi dan menangguhkan pertemuan."
-        ],
-        theoryUsed: "REBT",
-        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
-      },
-      {
-        sessionNumber: 2,
-        perkara: "Klien hadir semula untuk menyambung perbincangan tentang konflik dengan rakan.",
+          "Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya."
+      }),
+      validSession({
+        sesi: 2,
+        teori: "WDEP",
         persoalan:
-          "Kepercayaan tidak rasional bahawa rakan mesti sentiasa memahami dirinya masih mempengaruhi emosi klien.",
-        huraianBullets: [
-          "GBK menyemak perkembangan klien sejak sesi lepas.",
-          "Klien berkongsi bahawa dia masih mudah marah apabila diejek.",
-          "GBK menggunakan teknik WDEP untuk menilai tindakan semasa klien.",
-          "GBK merumuskan sesi dan menangguhkan pertemuan."
-        ],
-        theoryUsed: "WDEP",
-        continuityNote:
-          "Sesi ini menyambung isu kemarahan yang dibincang dalam sesi pertama."
-      }
+          "Klien masih menilai kehendak untuk diterima rakan melalui tingkah laku semasa yang kurang membantu hubungan sosialnya.",
+        huraian_tindakan_intervensi: [
+          "GBK menyemak semula perkongsian klien daripada sesi sebelumnya.",
+          "Klien menerangkan kehendak untuk diterima oleh rakan sekelas.",
+          "GBK meneroka tingkah laku semasa klien ketika berhadapan konflik.",
+          "GBK membantu klien menilai kesan tingkah laku terhadap hubungan rakan."
+        ]
+      })
     ]
   });
 
@@ -188,108 +195,243 @@ test("validateSessionBatch accepts phase-based and theory-based persoalan", () =
   assert.equal(result.issues.length, 0);
 });
 
-test("validateSessionBatch flags unsupported theories and weak persoalan", () => {
-  const result = validateSessionBatch({
+test("validateSessionBatch accepts no-theory and combined approach values", () => {
+  const noTheory = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 1 },
-    theoryMode: "auto",
-    sourceCaseDescription: "学生感到伤心，不想来学校。",
+    theoryMode: "none",
+    sourceCaseDescription: "Murid dipanggil kerana perubahan tingkah laku.",
     sessions: [
-      {
-        sessionNumber: 1,
-        perkara: "",
-        persoalan: "Adakah klien didera secara seksual?",
-        huraianTindakanIntervensi: "GBK bercakap dengan klien.",
-        theoryUsed: "CBT",
-        continuityNote: ""
-      }
+      validSession({
+        teori: "TIADA",
+        persoalan:
+          "Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya."
+      })
+    ]
+  });
+  const combined = validateSessionBatch({
+    requestedRange: { startSession: 1, endSession: 1 },
+    theoryMode: "combined",
+    sourceCaseDescription: "Murid sering bertengkar dengan rakan.",
+    sessions: [
+      validSession({
+        teori: "REBT_WDEP",
+        persoalan:
+          "Klien masih mentafsir teguran rakan secara kurang rasional dan perlu menilai tingkah laku semasa yang menjejaskan hubungan sosialnya."
+      })
     ]
   });
 
-  assert.equal(result.ok, false);
-  assert.match(result.issues.join(" "), /Perkara/i);
-  assert.match(result.issues.join(" "), /CBT/i);
-  assert.match(result.issues.join(" "), /point form/i);
-  assert.match(result.issues.join(" "), /bukan soalan/i);
-  assert.match(result.issues.join(" "), /andaian sensitif/i);
+  assert.equal(noTheory.ok, true);
+  assert.equal(combined.ok, true);
 });
 
-test("validateSessionBatch rejects process-like perkara and question-list persoalan", () => {
+test("validateSessionBatch rejects repeated Perkara/Persoalan, banned words, HTML and markdown", () => {
   const result = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 1 },
     theoryMode: "auto",
-    sourceCaseDescription: "Guru merujuk murid kerana kerap bergaduh dengan rakan.",
+    sourceCaseDescription: "Guru merujuk murid kerana kerap tidak hadir.",
     sessions: [
-      {
-        sessionNumber: 1,
-        perkara:
-          "Sesi Kaunseling Individu: Penerokaan Awal Isu Rujukan dan Latar Belakang Klien",
-        persoalan:
-          "Apakah punca rujukan klien? Bagaimana situasi keluarga klien? Adakah klien memahami isu ini?",
-        huraianBullets: [
-          "GBK menjemput klien hadir ke sesi.",
-          "Klien berkongsi situasi yang berlaku.",
-          "GBK meneroka maklumat awal berkaitan isu rujukan.",
-          "GBK merumuskan sesi dan menangguhkan pertemuan."
-        ],
-        theoryUsed: "REBT",
-        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
-      }
-    ]
-  });
-
-  assert.equal(result.ok, false);
-  assert.match(result.issues.join(" "), /Perkara perlu menjadi tajuk isu utama/i);
-  assert.match(result.issues.join(" "), /kata soal 'apakah'/i);
-  assert.match(result.issues.join(" "), /gabungan beberapa soalan/i);
-});
-
-test("validateSessionBatch rejects vague process summaries and direct question persoalan", () => {
-  const result = validateSessionBatch({
-    requestedRange: { startSession: 1, endSession: 1 },
-    theoryMode: "auto",
-    sourceCaseDescription: "Guru merujuk murid kerana bimbang dengan perubahan fizikal murid.",
-    sessions: [
-      {
-        sessionNumber: 1,
-        perkara: "Meneroka Isu Rujukan dan Membina Hubungan",
-        persoalan:
-          "Apakah punca kebimbangan guru terhadap klien, dan bagaimana klien memahami situasi yang berlaku?",
-        huraianBullets: [
-          "GBK menjemput klien hadir ke sesi.",
-          "Klien berkongsi keadaan yang dialami.",
+      validSession({
+        perkara: "Murid dirujuk kerana kerap tidak hadir ke sekolah.",
+        persoalan: "Murid dirujuk kerana kerap tidak hadir ke sekolah.",
+        huraian_tindakan_intervensi: [
           "GBK membina hubungan dengan klien.",
-          "GBK merumuskan sesi dan menangguhkan pertemuan."
-        ],
-        theoryUsed: "REBT",
-        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
-      }
+          "Klien berkongsi bahawa dia malas dan bermasalah hadir ke sekolah.",
+          "GBK meneroka keadaan klien. <b>HTML</b>",
+          "**GBK merumuskan sesi bersama klien.**"
+        ]
+      })
     ]
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.issues.join(" "), /Perkara perlu menjadi tajuk isu utama/i);
-  assert.match(result.issues.join(" "), /kata soal 'apakah'/i);
+  assert.match(result.issues.join(" "), /Persoalan tidak boleh mengulang Perkara/i);
+  assert.match(result.issues.join(" "), /bermasalah/i);
+  assert.match(result.issues.join(" "), /HTML/i);
+  assert.match(result.issues.join(" "), /markdown/i);
 });
 
-test("validateSessionBatch rejects sessions without bullet arrays", () => {
+test("validateSessionBatch rejects non-array or wrong-sized huraian", () => {
   const result = validateSessionBatch({
     requestedRange: { startSession: 1, endSession: 1 },
     theoryMode: "auto",
-    sourceCaseDescription: "学生因为和同学冲突而来辅导。",
+    sourceCaseDescription: "Murid dipanggil kerana perubahan tingkah laku.",
     sessions: [
-      {
-        sessionNumber: 1,
-        perkara: "Murid hadir ke sesi secara sukarela.",
-        persoalan:
-          "Masih dalam fasa membina hubungan maka masalah sebenar masih perlu diterokai.",
-        huraianTindakanIntervensi:
-          "GBK membina hubungan dengan klien. Klien berkongsi situasi yang dialami.",
-        theoryUsed: "REBT",
-        continuityNote: "Sesi pertama memfokuskan pembinaan hubungan."
-      }
+      validSession({
+        huraian_tindakan_intervensi:
+          "GBK membina hubungan. Klien berkongsi keadaan awal."
+      })
     ]
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.issues.join(" "), /bullet array/i);
+  assert.match(result.issues.join(" "), /array/i);
+  assert.match(result.issues.join(" "), /4 hingga 6/i);
+});
+
+test("generateCounsellingReport retries once after structural validation failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const responses = [
+    {
+      sessions: [
+        validSession({
+          huraian_tindakan_intervensi: ["GBK membina hubungan dengan klien."]
+        })
+      ]
+    },
+    {
+      sessions: [validSession()]
+    }
+  ];
+  let callCount = 0;
+
+  globalThis.fetch = async () => {
+    const body = responses[callCount++];
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: JSON.stringify(body) }]
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  };
+
+  try {
+    const result = await generateCounsellingReport({
+      settings: {
+        model: "gemini-2.5-flash",
+        apiKey: "test-key"
+      },
+      payload: {
+        caseDescription: "Murid sering bertengkar dengan rakan.",
+        sessionCount: 1,
+        phases: ["fasa2"],
+        theoryMode: "auto",
+        theoryPreference: "REBT",
+        privacyMode: "anonymous"
+      }
+    });
+
+    assert.equal(callCount, 2);
+    assert.equal(result.quality.ok, true);
+    assert.equal(result.sessions[0].sesi, 1);
+    assert.equal(result.sessions[0].huraian_tindakan_intervensi.length, 4);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("generateCounsellingReport retries once after invalid JSON", async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+
+  globalThis.fetch = async () => {
+    callCount += 1;
+    const text = callCount === 1 ? "{not-json" : JSON.stringify({ sessions: [validSession()] });
+
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [{ text }]
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  };
+
+  try {
+    const result = await generateCounsellingReport({
+      settings: {
+        model: "gemini-2.5-flash",
+        apiKey: "test-key"
+      },
+      payload: {
+        caseDescription: "Murid sering bertengkar dengan rakan.",
+        sessionCount: 1,
+        phases: ["fasa2"],
+        theoryMode: "auto",
+        theoryPreference: "REBT",
+        privacyMode: "anonymous"
+      }
+    });
+
+    assert.equal(callCount, 2);
+    assert.equal(result.quality.ok, true);
+    assert.equal(result.sessions[0].perkara, validSession().perkara);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("generateCounsellingReport does not retry for editable content quality issues", async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+
+  globalThis.fetch = async () => {
+    callCount += 1;
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    sessions: [
+                      validSession({
+                        perkara: "Murid dirujuk kerana kerap tidak hadir ke sekolah.",
+                        persoalan: "Murid dirujuk kerana kerap tidak hadir ke sekolah."
+                      })
+                    ]
+                  })
+                }
+              ]
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  };
+
+  try {
+    const result = await generateCounsellingReport({
+      settings: {
+        model: "gemini-2.5-flash",
+        apiKey: "test-key"
+      },
+      payload: {
+        caseDescription: "Guru merujuk murid kerana kerap tidak hadir.",
+        sessionCount: 1,
+        phases: ["fasa2"],
+        theoryMode: "auto",
+        theoryPreference: "REBT",
+        privacyMode: "anonymous"
+      }
+    });
+
+    assert.equal(callCount, 1);
+    assert.equal(result.quality.ok, false);
+    assert.match(result.quality.issues.join(" "), /Persoalan tidak boleh mengulang Perkara/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

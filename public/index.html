@@ -14,7 +14,7 @@
           <h1>Jana laporan sesi individu dalam Bahasa Melayu</h1>
           <p class="lede">
             Tulis kes dalam Bahasa Cina, pilih sesi yang diperlukan, dan semak
-            hasil yang dikekang kepada REBT serta Realiti (WDEP).
+            hasil ringkas untuk medan laporan kaunseling individu.
           </p>
         </div>
         <div class="status-card">
@@ -22,6 +22,24 @@
           <strong id="modelBadge">gemini-2.5-flash</strong>
           <p class="status-copy" id="apiStatus">Memeriksa API key...</p>
         </div>
+      </section>
+
+      <section class="panel">
+        <form id="accessForm" class="access-form hidden">
+          <label>
+            Kata laluan akses
+            <input
+              id="accessPasswordInput"
+              name="accessPassword"
+              type="password"
+              placeholder="Masukkan kata laluan sistem"
+            />
+          </label>
+          <div class="button-row settings-row">
+            <button type="submit">Buka akses</button>
+          </div>
+          <p id="accessStatus" class="privacy-hint hidden"></p>
+        </form>
       </section>
 
       <section class="panel">
@@ -40,18 +58,12 @@
             />
           </label>
           <label>
-            Mod teori
+            Pendekatan kaunseling
             <select id="theoryMode" name="theoryMode">
-              <option value="auto">Auto antara REBT / WDEP</option>
+              <option value="none">Tanpa teori khusus</option>
               <option value="rebt">REBT sahaja</option>
               <option value="wdep">WDEP sahaja</option>
-            </select>
-          </label>
-          <label>
-            Keutamaan teori
-            <select id="theoryPreference" name="theoryPreference">
-              <option value="REBT">Utamakan REBT</option>
-              <option value="WDEP">Utamakan WDEP</option>
+              <option value="combined">Gabungan REBT + WDEP</option>
             </select>
           </label>
           <label>
@@ -117,8 +129,21 @@
         </form>
       </section>
 
-      <section id="qualityPanel" class="panel hidden"></section>
       <section id="results" class="results"></section>
+      <section id="qualityPanel" class="panel hidden"></section>
+
+      <section id="historyPanel" class="panel hidden">
+        <div class="history-header">
+          <div>
+            <h2>Sejarah Jana</h2>
+            <p class="history-copy">
+              Disimpan pada pelayan tanpa huraian kes asal.
+            </p>
+          </div>
+          <button id="refreshHistoryButton" type="button">Segar Semula</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
     </main>
 
     <template id="sessionTemplate">

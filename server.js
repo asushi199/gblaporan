@@ -10,6 +10,11 @@ import {
   validatePhaseSelections
 } from "./src/report-generator.js";
 import { generateCounsellingReport } from "./src/gemini-client.js";
+import {
+  addHistoryEntry,
+  deleteHistoryEntry,
+  listHistoryEntries
+} from "./src/history-store.js";
 import { readSettings, writeSettings } from "./src/settings-store.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,7 +33,17 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
+    if (req.method === "GET" && url.pathname === "/api/access") {
+      return sendJson(res, 200, {
+        accessRequired: hasAccessPassword()
+      });
+    }
+
     if (req.method === "GET" && url.pathname === "/api/settings") {
+      if (!requireAccess(req, res)) {
+        return;
+      }
+
       const settings = await readSettings();
       const hasEnvApiKey = Boolean(process.env.GEMINI_API_KEY);
       return sendJson(res, 200, {
@@ -44,6 +59,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/settings") {
+      if (!requireAccess(req, res)) {
+        return;
+      }
+
       const body = await readJson(req);
       const current = await readSettings();
       const hasEnvApiKey = Boolean(process.env.GEMINI_API_KEY);
@@ -80,6 +99,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/generate") {
+      if (!requireAccess(req, res)) {
+        return;
+      }
+
       const body = await readJson(req);
       const settings = await readSettings();
       const caseDescription = String(body.caseDescription || "").trim();
@@ -112,7 +135,7 @@ const server = http.createServer(async (req, res) => {
           caseDescription,
           sessionCount,
           phases,
-          theoryMode: String(body.theoryMode || settings.theoryMode || "auto"),
+          theoryMode: String(body.theoryMode || settings.theoryMode || "none"),
           theoryPreference: String(
             body.theoryPreference || settings.theoryPreference || "REBT"
           ),
@@ -122,7 +145,31 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      return sendJson(res, 200, report);
+      const historyEntry = await addHistoryEntry(report);
+
+      return sendJson(res, 200, {
+        ...report,
+        historyEntry
+      });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/history") {
+      if (!requireAccess(req, res)) {
+        return;
+      }
+
+      const entries = await listHistoryEntries();
+      return sendJson(res, 200, { entries });
+    }
+
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/history/")) {
+      if (!requireAccess(req, res)) {
+        return;
+      }
+
+      const id = decodeURIComponent(url.pathname.replace("/api/history/", ""));
+      const deleted = await deleteHistoryEntry(id);
+      return sendJson(res, deleted ? 200 : 404, { deleted });
     }
 
     await serveStatic(req, res, url.pathname);
@@ -171,6 +218,27 @@ function sendJson(res, statusCode, payload) {
     "Content-Type": "application/json; charset=utf-8"
   });
   res.end(JSON.stringify(payload));
+}
+
+function hasAccessPassword() {
+  return Boolean(process.env.ACCESS_PASSWORD);
+}
+
+function requireAccess(req, res) {
+  const password = process.env.ACCESS_PASSWORD;
+
+  if (!password) {
+    return true;
+  }
+
+  if (req.headers["x-access-password"] === password) {
+    return true;
+  }
+
+  sendJson(res, 401, {
+    error: "Kata laluan akses diperlukan."
+  });
+  return false;
 }
 
 async function readJson(req) {
