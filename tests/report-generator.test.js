@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assignPhasesToSessions,
   buildFallbackSession,
   buildPromptPayload,
   buildSessionRanges,
@@ -123,6 +124,54 @@ test("buildFallbackSession returns safe early-phase content", () => {
   assert.equal(session.teori, "TIADA");
   assert.match(session.persoalan, /fasa membina hubungan/i);
   assert.equal(session.huraian_tindakan_intervensi.length, 4);
+});
+
+test("assignPhasesToSessions distributes selected phases in order", () => {
+  assert.deepEqual(assignPhasesToSessions(6, ["fasa4", "fasa5", "fasa6"]), [
+    "fasa4",
+    "fasa4",
+    "fasa5",
+    "fasa5",
+    "fasa6",
+    "fasa6"
+  ]);
+  assert.deepEqual(assignPhasesToSessions(4, ["fasa4"]), [
+    "fasa4",
+    "fasa4",
+    "fasa4",
+    "fasa4"
+  ]);
+});
+
+test("buildFallbackSession aligns content with a later selected phase", () => {
+  const session = buildFallbackSession(1, "REBT", "", "fasa5");
+
+  assert.doesNotMatch(session.persoalan, /membina hubungan/i);
+  assert.match(session.persoalan, /strategi|tindakan/i);
+});
+
+test("buildPromptPayload locks each session to a selected phase and forbids others", () => {
+  const payload = buildPromptPayload({
+    caseDescription: "Murid dipanggil kerana konflik berulang.",
+    sessionCount: 2,
+    phases: ["fasa4", "fasa5", "fasa6"],
+    theoryMode: "auto",
+    theoryPreference: "REBT",
+    privacyMode: "anonymous",
+    currentRange: { startSession: 1, endSession: 2 },
+    previousSessions: []
+  });
+
+  assert.match(payload.userPrompt, /Sesi 1 = Fasa 4/);
+  assert.match(payload.userPrompt, /fasa lebih awal yang tidak dipilih/i);
+  assert.match(
+    payload.systemInstruction,
+    /Fasa Membina Hubungan tidak dipilih/i
+  );
+  assert.doesNotMatch(
+    payload.systemInstruction,
+    /Persoalan boleh ditulis: 'Memandangkan/i
+  );
 });
 
 test("buildPromptPayload supports no-theory and combined approach modes", () => {

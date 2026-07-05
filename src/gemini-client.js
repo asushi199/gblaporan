@@ -1,4 +1,5 @@
 import {
+  assignPhasesToSessions,
   buildFallbackSession,
   buildPromptPayload,
   buildQualityAdvice,
@@ -137,7 +138,9 @@ async function requestValidBatch({
     range,
     theoryMode: payload.theoryMode,
     theoryPreference: payload.theoryPreference,
-    stablePerkara
+    stablePerkara,
+    phases: payload.phases,
+    sessionCount: payload.sessionCount
   });
   const fallbackValidation = validateSessionBatch({
     requestedRange: range,
@@ -171,13 +174,17 @@ function buildFallbackSessions({
   range,
   theoryMode,
   theoryPreference,
-  stablePerkara
+  stablePerkara,
+  phases,
+  sessionCount
 }) {
   const teori = getFallbackTeori(theoryMode, theoryPreference);
+  const assignments = assignPhasesToSessions(sessionCount, phases);
   const sessions = [];
 
   for (let sesi = range.startSession; sesi <= range.endSession; sesi += 1) {
-    sessions.push(buildFallbackSession(sesi, teori, stablePerkara));
+    const phase = assignments[sesi - 1] || null;
+    sessions.push(buildFallbackSession(sesi, teori, stablePerkara, phase));
   }
 
   return sessions;

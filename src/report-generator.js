@@ -11,6 +11,110 @@ export const AVAILABLE_PHASES = [
 const AVAILABLE_PHASE_VALUES = new Set(
   AVAILABLE_PHASES.map((phase) => phase.value)
 );
+const PHASE_ORDER = AVAILABLE_PHASES.map((phase) => phase.value);
+const PHASE_WRITING_RULES = {
+  fasa1:
+    "Fasa Pra-Sesi hanya tulis persediaan sebelum sesi, sumber rujukan dan tujuan pemanggilan tanpa terus menganalisis punca.",
+  fasa2:
+    "Fasa Membina Hubungan hanya tulis bina hubungan, tujuan sesi, keselesaan klien dan perkongsian awal, dan jangan terus menulis penyelesaian.",
+  fasa3:
+    "Fasa Penerokaan Masalah tulis soalan terbuka serta penerokaan perasaan, pemikiran dan situasi.",
+  fasa4:
+    "Fasa Mengenal Pasti Masalah tulis masalah utama, kesan tingkah laku serta kaitan pemikiran, perasaan dan tingkah laku.",
+  fasa5:
+    "Fasa Pemilihan Strategi dan Tindakan tulis strategi, pilihan tindakan, latihan dan komitmen.",
+  fasa6: "Fasa Penamatan dan Susulan tulis rumusan, penamatan dan susulan."
+};
+const PHASE_FALLBACK_CONTENT = {
+  fasa1: {
+    persoalan:
+      "Sesi ini merupakan persediaan pra-sesi, maka isu sebenar klien belum diterokai dan akan dikenal pasti dalam sesi berikutnya.",
+    huraian: [
+      "GBK menyemak maklumat rujukan dan menyediakan persediaan sebelum sesi.",
+      "GBK menetapkan tujuan pemanggilan klien secara ringkas dan neutral.",
+      "GBK merancang pendekatan awal yang sesuai dengan keperluan klien.",
+      "GBK bersedia untuk memulakan sesi pada pertemuan seterusnya."
+    ]
+  },
+  fasa2: {
+    persoalan:
+      "Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya.",
+    huraian: [
+      "GBK menyambut kehadiran klien dengan mesra dan membina hubungan awal.",
+      "GBK menerangkan tujuan sesi supaya klien berasa lebih selesa.",
+      "Klien diberi ruang untuk berkongsi perkara awal mengikut kesediaannya.",
+      "GBK merumuskan perkongsian awal dan memaklumkan sesi akan diteruskan."
+    ]
+  },
+  fasa3: {
+    persoalan:
+      "Isu klien sedang diterokai melalui soalan terbuka serta perkongsian perasaan, pemikiran dan situasi semasa.",
+    huraian: [
+      "GBK menggunakan soalan terbuka untuk meneroka situasi klien.",
+      "GBK meneroka perasaan dan pemikiran klien berkaitan isu yang dikongsi.",
+      "Klien berkongsi pengalaman dan situasi yang dialaminya.",
+      "GBK merumuskan penerokaan awal dan meneruskan sesi seterusnya."
+    ]
+  },
+  fasa4: {
+    persoalan:
+      "Masalah utama klien mula dikenal pasti berserta kesannya terhadap emosi, pemikiran dan tingkah laku.",
+    huraian: [
+      "GBK membantu klien mengenal pasti masalah utama yang dihadapi.",
+      "GBK meneroka kesan masalah terhadap emosi dan tingkah laku klien.",
+      "Klien mengaitkan pemikiran, perasaan dan tingkah lakunya dengan situasi.",
+      "GBK merumuskan masalah utama sebagai fokus sesi berikutnya."
+    ]
+  },
+  fasa5: {
+    persoalan:
+      "Klien meneliti strategi dan pilihan tindakan yang boleh diambil untuk menangani masalah yang telah dikenal pasti.",
+    huraian: [
+      "GBK membincangkan pilihan strategi bersama klien.",
+      "GBK membimbing klien memilih tindakan yang sesuai dan boleh dilaksanakan.",
+      "Klien menyatakan komitmen terhadap tindakan yang dipersetujui.",
+      "GBK merumuskan pelan tindakan dan menetapkan langkah seterusnya."
+    ]
+  },
+  fasa6: {
+    persoalan:
+      "Sesi menuju penamatan dengan rumusan kemajuan klien serta perancangan susulan yang bersesuaian.",
+    huraian: [
+      "GBK merumuskan kemajuan dan perubahan yang ditunjukkan klien.",
+      "GBK bersama klien menilai pencapaian matlamat sesi.",
+      "Klien menyatakan kesediaan untuk meneruskan tindakan secara sendiri.",
+      "GBK menetapkan pelan susulan dan menamatkan sesi dengan sokongan."
+    ]
+  }
+};
+
+export function orderSelectedPhases(phases) {
+  const selected = new Set(
+    (Array.isArray(phases) ? phases : [])
+      .map((phase) => String(phase).trim())
+      .filter(Boolean)
+  );
+  return PHASE_ORDER.filter((value) => selected.has(value));
+}
+
+export function assignPhasesToSessions(sessionCount, phases) {
+  const ordered = orderSelectedPhases(phases);
+  const total = Math.max(1, Number(sessionCount) || 1);
+  const assignments = [];
+
+  for (let index = 0; index < total; index += 1) {
+    const phaseIndex = ordered.length
+      ? Math.min(ordered.length - 1, Math.floor((index * ordered.length) / total))
+      : 0;
+    assignments.push(ordered[phaseIndex] || null);
+  }
+
+  return assignments;
+}
+
+function phaseLabel(value) {
+  return AVAILABLE_PHASES.find((item) => item.value === value)?.label || value;
+}
 const BANNED_THEORY_WORDS = [
   "CBT",
   "Gestalt",
@@ -170,6 +274,33 @@ export function buildPromptPayload({
       ? "Nama sebenar dibenarkan jika diberi dalam input."
       : "Jangan gunakan nama sebenar murid. Gunakan 'klien' atau 'murid' sahaja.";
 
+  const orderedPhases = orderSelectedPhases(phases);
+  const sessionPhaseMap = assignPhasesToSessions(sessionCount, phases);
+  const allowedPhaseLabels = orderedPhases.map(phaseLabel).join("; ");
+  const rapportSelected = orderedPhases.includes("fasa2");
+
+  const phaseWritingRules = orderedPhases
+    .map((phase) => PHASE_WRITING_RULES[phase])
+    .filter(Boolean);
+
+  const rapportPlaceholderRule = rapportSelected
+    ? [
+        "Jika sesi masih pada Fasa Membina Hubungan atau isu belum diterokai dengan mendalam, Persoalan boleh ditulis: 'Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya.'"
+      ]
+    : [
+        "Fasa Membina Hubungan tidak dipilih, jadi jangan tulis ayat membina hubungan awal dan jangan gunakan ayat penanda 'masih berada pada fasa membina hubungan'."
+      ];
+
+  const batchPhaseLines = [];
+  for (
+    let sesi = currentRange.startSession;
+    sesi <= currentRange.endSession;
+    sesi += 1
+  ) {
+    const phaseValue = sessionPhaseMap[sesi - 1] || orderedPhases[0];
+    batchPhaseLines.push(`Sesi ${sesi} = ${phaseLabel(phaseValue)}`);
+  }
+
   return {
     systemInstruction: [
       "Anda ialah pembantu penulisan laporan kaunseling sekolah rendah.",
@@ -185,7 +316,7 @@ export function buildPromptPayload({
       "Persoalan merujuk kepada isu utama, konflik dasar atau punca yang mengganggu emosi, pemikiran atau tingkah laku klien. Ia adalah teras permasalahan yang dikenal pasti oleh kaunselor untuk diterokai atau diselesaikan bersama klien sepanjang sesi.",
       "Persoalan bukan ulangan Perkara, bukan soalan, bukan senarai soalan, bukan tuduhan, dan bukan label terhadap murid.",
       "Jika maklumat cukup jelas, tulis Persoalan sebagai core issue, konflik dasar atau sebab yang mempengaruhi emosi, pemikiran atau tingkah laku klien.",
-      "Jika sesi masih pada Fasa Membina Hubungan atau isu belum diterokai dengan mendalam, Persoalan boleh ditulis: 'Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya.'",
+      ...rapportPlaceholderRule,
       "Jika memilih REBT dan maklumat cukup, tulis dari sudut pemikiran tidak rasional, kepercayaan kurang rasional atau cara klien mentafsir situasi tanpa gaya buku teks.",
       "Jika memilih WDEP, tulis dari sudut kehendak, tingkah laku semasa, penilaian kendiri dan perancangan tindakan.",
       "Jangan cipta diagnosis klinikal, latar belakang keluarga terperinci, atau fakta yang tiada dalam input.",
@@ -193,11 +324,8 @@ export function buildPromptPayload({
       "Jangan gunakan perkataan nakal, degil, ganas, bermasalah, malas, ADHD, anxiety, depression, trauma, atau hyperaktif.",
       "Huraian Tindakan / Intervensi mesti menjadi array dengan 4 hingga 6 ayat ringkas.",
       "Setiap item huraian_tindakan_intervensi mesti bermula dengan 'GBK' atau 'Klien'.",
-      "Sesi awal jangan terus menulis penyelesaian. Fasa Membina Hubungan hanya tulis bina hubungan, tujuan sesi, keselesaan klien dan perkongsian awal.",
-      "Fasa Penerokaan Masalah tulis soalan terbuka serta penerokaan perasaan, pemikiran dan situasi.",
-      "Fasa Mengenal Pasti Masalah tulis masalah utama, kesan tingkah laku serta kaitan pemikiran, perasaan dan tingkah laku.",
-      "Fasa Pemilihan Strategi dan Tindakan baru tulis strategi, pilihan tindakan, latihan dan komitmen.",
-      "Fasa Penamatan dan Susulan tulis rumusan, penamatan dan susulan.",
+      "Tulis kandungan setiap sesi mengikut fasa yang ditetapkan untuk sesi itu sahaja, dan jangan meloncat ke fasa lain.",
+      ...phaseWritingRules,
       "Gaya mesti neutral, rasmi, ringkas dan sesuai untuk laporan kaunseling sekolah rendah.",
       privacyRule,
       theoryRule
@@ -205,12 +333,13 @@ export function buildPromptPayload({
     userPrompt: [
       `Kes murid dalam Bahasa Cina atau nota guru: ${caseDescription}`,
       `Jumlah sesi diminta: ${sessionCount}.`,
-      `Fasa yang diliputi oleh keseluruhan set sesi ini: ${describePhases(phases)}.`,
+      `Guru hanya memilih fasa berikut untuk laporan ini: ${allowedPhaseLabels}. Jangan tulis kandungan bagi fasa lain, terutama fasa lebih awal yang tidak dipilih.`,
+      `Setiap sesi dalam batch ini mesti ditulis TEPAT pada fasa yang ditetapkan: ${batchPhaseLines.join("; ")}.`,
       `Jana JSON untuk Sesi ${currentRange.startSession} hingga ${currentRange.endSession}.`,
       stablePerkara
         ? `Gunakan Perkara asal ini untuk sesi dalam batch ini kecuali input jelas memerlukan perubahan: ${stablePerkara}.`
         : "Tentukan Perkara asal sebagai sebab ringkas murid dirujuk atau dipanggil.",
-      "Jika beberapa sesi dijana, Persoalan boleh berkembang mengikut fasa, tetapi mesti kekal berdasarkan maklumat guru dan sesi terdahulu.",
+      "Persoalan boleh berkembang mengikut fasa yang ditetapkan untuk setiap sesi, tetapi mesti kekal dalam fasa yang dipilih guru dan berdasarkan maklumat guru serta sesi terdahulu.",
       `Ringkasan sesi terdahulu:\n${previousSummary}`,
       `Semakan terdahulu:\n${retryAdvice}`,
       "Output mesti valid JSON tanpa HTML atau markdown.",
@@ -297,19 +426,20 @@ export function normaliseSession(session, stableFields = {}) {
   };
 }
 
-export function buildFallbackSession(sesi, teori = "REBT", stablePerkara = "") {
+export function buildFallbackSession(
+  sesi,
+  teori = "REBT",
+  stablePerkara = "",
+  phase = "fasa2"
+) {
+  const content = PHASE_FALLBACK_CONTENT[phase] || PHASE_FALLBACK_CONTENT.fasa2;
+
   return {
     sesi,
     teori: ALLOWED_APPROACHES.has(teori) ? teori : "TIADA",
     perkara: stablePerkara || "Murid hadir berkaitan isu yang dikongsikan.",
-    persoalan:
-      "Memandangkan sesi masih berada pada fasa membina hubungan, isu sebenar klien masih belum dapat dikenal pasti sepenuhnya dan perlu diterokai dalam sesi seterusnya.",
-    huraian_tindakan_intervensi: [
-      "GBK menyambut kehadiran klien dengan mesra dan membina hubungan awal.",
-      "GBK menerangkan tujuan sesi supaya klien berasa lebih selesa.",
-      "Klien diberi ruang untuk berkongsi perkara awal mengikut kesediaannya.",
-      "GBK merumuskan perkongsian awal dan memaklumkan sesi akan diteruskan."
-    ]
+    persoalan: content.persoalan,
+    huraian_tindakan_intervensi: [...content.huraian]
   };
 }
 
