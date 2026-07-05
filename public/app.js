@@ -306,6 +306,9 @@ function renderSessions(sessions) {
       const value = isPointForm
         ? formatHuraian(session[key] || session.huraianTindakanIntervensi || "")
         : session[key] || "";
+      const rows = isPointForm
+        ? Math.max(6, value.split("\n").length)
+        : 2;
       const field = document.createElement("section");
       field.className = "field";
       field.dataset.key = key;
@@ -314,7 +317,7 @@ function renderSessions(sessions) {
           <p class="field-name">${label}</p>
           <button class="field-copy" type="button">Salin</button>
         </div>
-        <textarea class="field-value editable-field" rows="${isPointForm ? 6 : 2}">${escapeHtml(value)}</textarea>
+        <textarea class="field-value editable-field" rows="${rows}">${escapeHtml(value)}</textarea>
       `;
 
       field.querySelector(".field-copy").addEventListener("click", async () => {
@@ -414,24 +417,22 @@ function formatHistoryDate(value) {
   });
 }
 
-function formatPointForm(value) {
+function toHuraianLines(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
   return String(value || "")
-    .replace(/\s+-\s+(?=(GBK|Klien|Murid)\b)/gi, "\n- ")
+    .replace(/\s+-\s+(?=(GBK|Klien|Murid)\b)/gi, "\n")
     .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join("\n");
+    .map((line) => line.trim().replace(/^[-*]\s*/, ""))
+    .filter(Boolean);
 }
 
 function formatHuraian(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item || "").trim())
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  return formatPointForm(value);
+  return toHuraianLines(value)
+    .map((line) => `- ${line}`)
+    .join("\n\n");
 }
 
 function getFieldValue(card, key) {
