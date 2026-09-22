@@ -13,7 +13,8 @@ import { generateCounsellingReport } from "./src/gemini-client.js";
 import {
   addHistoryEntry,
   deleteHistoryEntry,
-  listHistoryEntries
+  listHistoryEntries,
+  pingHistoryStore
 } from "./src/history-store.js";
 import { readSettings, writeSettings } from "./src/settings-store.js";
 
@@ -96,6 +97,12 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         hasApiKey: Boolean(process.env.GEMINI_API_KEY)
       });
+    }
+
+    // Keep-alive: cron-job.org pings this to keep Supabase (and Render) awake.
+    if (req.method === "GET" && url.pathname === "/api/keepalive") {
+      const result = await pingHistoryStore();
+      return sendJson(res, 200, result);
     }
 
     if (req.method === "POST" && url.pathname === "/api/generate") {

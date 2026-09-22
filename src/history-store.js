@@ -49,6 +49,32 @@ export async function deleteHistoryEntry(id, historyPath = HISTORY_PATH) {
   return data.entries.length !== before;
 }
 
+export async function pingHistoryStore(historyPath = HISTORY_PATH) {
+  const supabase = getSupabaseConfig();
+
+  if (!supabase) {
+    await readHistory(historyPath);
+    return { ok: true, backend: "local" };
+  }
+
+  const baseUrl = String(supabase.url).replace(/\/+$/, "");
+  const response = await globalThis.fetch(
+    `${baseUrl}/rest/v1/${SUPABASE_TABLE}?select=id&limit=1`,
+    {
+      headers: {
+        apikey: supabase.serviceRoleKey,
+        Authorization: `Bearer ${supabase.serviceRoleKey}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    await readSupabaseJson(response);
+  }
+
+  return { ok: true, backend: "supabase" };
+}
+
 export function useSupabaseHistory({
   url,
   serviceRoleKey,
