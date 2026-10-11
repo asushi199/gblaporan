@@ -7,7 +7,7 @@
 
 - 支持把中文个案资料整理成马来文个辅报告
 - 默认模型为 `gemini-2.5-flash`
-- 可切换模型：`gemini-3.1-flash-lite`、`gemini-3.5-flash`
+- 可切换模型：`gemini-3.6-flash`、`gemini-3.5-flash-lite`
 - 支持一次生成多个 `sesi`
 - 支持选择本次报告涵盖的 `fasa`
 - 自动检查输出是否包含必要栏位、是否为 point form、是否只使用允许的理论
